@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The KubeEdge Authors.
+Copyright 2022 The KubeEdge Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,17 +19,17 @@ package cmd
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"k8s.io/klog/v2"
 	phases "k8s.io/kubernetes/cmd/kubeadm/app/cmd/phases/reset"
 	utilruntime "k8s.io/kubernetes/cmd/kubeadm/app/util/runtime"
+	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
 	utilsexec "k8s.io/utils/exec"
 
 	"github.com/kubeedge/kubeedge/keadm/cmd/keadm/app/cmd/common"
+	"github.com/kubeedge/kubeedge/keadm/cmd/keadm/app/cmd/helm"
 	"github.com/kubeedge/kubeedge/keadm/cmd/keadm/app/cmd/util"
 )
 
@@ -51,33 +51,30 @@ keadm reset
 func newResetOptions() *common.ResetOptions {
 	opts := &common.ResetOptions{}
 	opts.Kubeconfig = common.DefaultKubeConfig
+	opts.RuntimeType = kubetypes.RemoteContainerRuntime
 	return opts
 }
 
-// NewKubeEdgeReset represents the reset command
-func NewKubeEdgeReset(out io.Writer, reset *common.ResetOptions) *cobra.Command {
-	IsEdgeNode := false
-	if reset == nil {
-		reset = newResetOptions()
-	}
+func NewKubeEdgeReset() *cobra.Command {
+	isEdgeNode := false
+	reset := newResetOptions()
 
 	var cmd = &cobra.Command{
 		Use:     "reset",
-		Short:   "Teardowns KubeEdge (cloud & edge) component",
+		Short:   "Teardowns KubeEdge (cloud(helm installed) & edge) component",
 		Long:    resetLongDescription,
 		Example: resetExample,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
-			whoRunning, err := util.RunningModule()
-			if err != nil {
-				return err
-			}
-			switch whoRunning {
-			case common.KubeEdgeEdgeRunning:
-				IsEdgeNode = true
-			case common.NoneRunning:
+			whoRunning := util.RunningModuleV2(reset)
+			if whoRunning == common.NoneRunning {
 				fmt.Println("None of KubeEdge components are running in this host, exit")
 				os.Exit(0)
 			}
+
+			if whoRunning == common.KubeEdgeEdgeRunning {
+				isEdgeNode = true
+			}
+
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -95,20 +92,24 @@ func NewKubeEdgeReset(out io.Writer, reset *common.ResetOptions) *cobra.Command 
 			}
 			// 1. kill cloudcore/edgecore process.
 			// For edgecore, don't delete node from K8S
-			if err := TearDownKubeEdge(IsEdgeNode, reset.Kubeconfig); err != nil {
+			if err := TearDownKubeEdge(isEdgeNode, reset.Kubeconfig); err != nil {
 				return err
 			}
 
 			// 2. Remove containers managed by KubeEdge. Only for edge node.
-			if err := RemoveContainers(IsEdgeNode, utilsexec.New()); err != nil {
-				klog.Warningf("Failed to remove containers: %v\n", err)
+			if err := RemoveContainers(isEdgeNode, utilsexec.New()); err != nil {
+				fmt.Printf("Failed to remove containers: %v\n", err)
 			}
 
 			// 3. Clean stateful directories
-			if err := cleanDirectories(IsEdgeNode); err != nil {
+			if err := cleanDirectories(isEdgeNode); err != nil {
 				return err
 			}
 
+			// cleanup mqtt container
+			if err := RemoveMqttContainer(reset.RuntimeType, reset.Endpoint); err != nil {
+				fmt.Printf("Failed to remove MQTT container: %v\n", err)
+			}
 			//4. TODO: clean status information
 
 			return nil
@@ -119,11 +120,24 @@ func NewKubeEdgeReset(out io.Writer, reset *common.ResetOptions) *cobra.Command 
 	return cmd
 }
 
+func RemoveMqttContainer(runtimeType string, endpoint string) error {
+	runtime, err := util.NewContainerRuntime(runtimeType, endpoint)
+	if err != nil {
+		return fmt.Errorf("failed to new container runtime: %v", err)
+	}
+
+	return runtime.RemoveMQTT()
+}
+
 // TearDownKubeEdge will bring down either cloud or edge components,
 // depending upon in which type of node it is executed
 func TearDownKubeEdge(isEdgeNode bool, kubeConfig string) error {
 	var ke common.ToolsInstaller
-	ke = &util.KubeCloudInstTool{Common: util.Common{KubeConfig: kubeConfig}}
+	ke = &helm.KubeCloudHelmInstTool{
+		Common: util.Common{
+			KubeConfig: kubeConfig,
+		},
+	}
 	if isEdgeNode {
 		ke = &util.KubeEdgeInstTool{Common: util.Common{}}
 	}
@@ -173,7 +187,7 @@ func cleanDirectories(isEdgeNode bool) error {
 
 	for _, dir := range dirToClean {
 		if err := phases.CleanDir(dir); err != nil {
-			klog.Warningf("Failed to delete directory %s: %v", dir, err)
+			fmt.Printf("Failed to delete directory %s: %v\n", dir, err)
 		}
 	}
 
@@ -185,4 +199,8 @@ func addResetFlags(cmd *cobra.Command, resetOpts *common.ResetOptions) {
 		"Use this key to set kube-config path, eg: $HOME/.kube/config")
 	cmd.Flags().BoolVar(&resetOpts.Force, "force", resetOpts.Force,
 		"Reset the node without prompting for confirmation")
+	cmd.Flags().StringVar(&resetOpts.RuntimeType, common.RuntimeType, resetOpts.RuntimeType,
+		"Use this key to set container runtime")
+	cmd.Flags().StringVar(&resetOpts.Endpoint, common.RemoteRuntimeEndpoint, resetOpts.Endpoint,
+		"Use this key to set container runtime endpoint")
 }

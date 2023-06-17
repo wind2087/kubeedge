@@ -26,6 +26,7 @@ import (
 	"github.com/astaxie/beego/orm"
 	"github.com/golang/mock/gomock"
 
+	"github.com/kubeedge/beehive/pkg/common"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/edge/mocks/beego"
@@ -64,9 +65,9 @@ func createFakeDeviceTwin() *[]dtclient.DeviceTwin {
 	return fakeDeviceTwin
 }
 
-//TestRegisterDTModule is function to test RegisterDTmodule().
+// TestRegisterDTModule is function to test RegisterDTmodule().
 func TestRegisterDTModule(t *testing.T) {
-	beehiveContext.InitContext(beehiveContext.MsgCtxTypeChannel)
+	beehiveContext.InitContext([]string{common.MsgCtxTypeChannel})
 	dtContexts, _ := dtcontext.InitDTContext()
 	var moduleRegistered bool
 	dtc := &DeviceTwin{
@@ -105,16 +106,16 @@ func TestRegisterDTModule(t *testing.T) {
 					break
 				}
 			}
-			if moduleRegistered == false {
+			if !moduleRegistered {
 				t.Errorf("RegisterDTModule failed to register the module %v", tt.moduleName)
 			}
 		})
 	}
 }
 
-//TestDTController_distributeMsg is function to test distributeMsg().
+// TestDTController_distributeMsg is function to test distributeMsg().
 func TestDTController_distributeMsg(t *testing.T) {
-	beehiveContext.InitContext(beehiveContext.MsgCtxTypeChannel)
+	beehiveContext.InitContext([]string{common.MsgCtxTypeChannel})
 	dtContexts, _ := dtcontext.InitDTContext()
 	dtc := &DeviceTwin{
 		HeartBeatToModule: make(map[string]chan interface{}),
@@ -150,7 +151,7 @@ func TestDTController_distributeMsg(t *testing.T) {
 			//Failure Case
 			name:    "distributeMsgTest-NilMessage",
 			message: "",
-			wantErr: errors.New("Distribute message, msg is nil"),
+			wantErr: errors.New("distribute message, msg is nil"),
 		},
 		{
 			//Failure Case
@@ -161,7 +162,7 @@ func TestDTController_distributeMsg(t *testing.T) {
 					Resource: "membership/detail",
 				},
 			},
-			wantErr: errors.New("Not found action"),
+			wantErr: errors.New("not found action"),
 		},
 		{
 			//Failure Case
@@ -197,13 +198,13 @@ func TestDTController_distributeMsg(t *testing.T) {
 	})
 }
 
-//TestSyncSqlite is function to test SyncSqlite().
+// TestSyncSqlite is function to test SyncSqlite().
 func TestSyncSqlite(t *testing.T) {
 	// ormerMock is mocked Ormer implementation.
 	var ormerMock *beego.MockOrmer
 	// querySeterMock is mocked QuerySeter implementation.
 	var querySeterMock *beego.MockQuerySeter
-	beehiveContext.InitContext(beehiveContext.MsgCtxTypeChannel)
+	beehiveContext.InitContext([]string{common.MsgCtxTypeChannel})
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
 	ormerMock = beego.NewMockOrmer(mockCtrl)
@@ -288,14 +289,14 @@ func TestSyncSqlite(t *testing.T) {
 	}
 }
 
-//TestSyncDeviceFromSqlite is function to test SyncDeviceFromSqlite().
+// TestSyncDeviceFromSqlite is function to test SyncDeviceFromSqlite().
 func TestSyncDeviceFromSqlite(t *testing.T) {
 	// ormerMock is mocked Ormer implementation.
 	var ormerMock *beego.MockOrmer
 	// querySeterMock is mocked QuerySeter implementation.
 	var querySeterMock *beego.MockQuerySeter
 
-	beehiveContext.InitContext(beehiveContext.MsgCtxTypeChannel)
+	beehiveContext.InitContext([]string{common.MsgCtxTypeChannel})
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
 	ormerMock = beego.NewMockOrmer(mockCtrl)
@@ -423,7 +424,7 @@ func TestSyncDeviceFromSqlite(t *testing.T) {
 	}
 }
 
-//Test_classifyMsg is function to test classifyMsg().
+// Test_classifyMsg is function to test classifyMsg().
 func Test_classifyMsg(t *testing.T) {
 	//Encoded resource with LifeCycleConnectETPrefix
 	connectTopic := dtcommon.LifeCycleConnectETPrefix + "testtopic"

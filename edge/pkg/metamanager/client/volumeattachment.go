@@ -10,7 +10,6 @@ import (
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/message"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
-	"github.com/kubeedge/kubeedge/edge/pkg/metamanager"
 )
 
 // VolumeAttachmentsGetter is interface to get client VolumeAttachments
@@ -70,18 +69,12 @@ func (c *volumeattachments) Get(name string, options metav1.GetOptions) (*api.Vo
 		return nil, fmt.Errorf("get volumeattachment from metaManager failed, err: %v", err)
 	}
 
-	var content []byte
-	switch msg.Content.(type) {
-	case []byte:
-		content = msg.GetContent().([]byte)
-	default:
-		content, err = json.Marshal(msg.GetContent())
-		if err != nil {
-			return nil, fmt.Errorf("marshal message to volumeattachment failed, err: %v", err)
-		}
+	content, err := msg.GetContentData()
+	if err != nil {
+		return nil, fmt.Errorf("parse message to volumeattachment failed, err: %v", err)
 	}
 
-	if msg.GetOperation() == model.ResponseOperation && msg.GetSource() == metamanager.MetaManagerModuleName {
+	if msg.GetOperation() == model.ResponseOperation && msg.GetSource() == modules.MetaManagerModuleName {
 		return handleVolumeAttachmentFromMetaDB(content)
 	}
 	return handleVolumeAttachmentFromMetaManager(content)
@@ -98,19 +91,19 @@ func handleVolumeAttachmentFromMetaDB(content []byte) (*api.VolumeAttachment, er
 		return nil, fmt.Errorf("volumeattachment length from meta db is %d", len(lists))
 	}
 
-	var va *api.VolumeAttachment
+	var va api.VolumeAttachment
 	err = json.Unmarshal([]byte(lists[0]), &va)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshal message to volumeattachment from db failed, err: %v", err)
 	}
-	return va, nil
+	return &va, nil
 }
 
 func handleVolumeAttachmentFromMetaManager(content []byte) (*api.VolumeAttachment, error) {
-	var va *api.VolumeAttachment
+	var va api.VolumeAttachment
 	err := json.Unmarshal(content, &va)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshal message to volumeattachment failed, err: %v", err)
 	}
-	return va, nil
+	return &va, nil
 }

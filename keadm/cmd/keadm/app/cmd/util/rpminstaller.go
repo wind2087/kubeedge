@@ -18,10 +18,15 @@ package util
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/blang/semver"
 
 	types "github.com/kubeedge/kubeedge/keadm/cmd/keadm/app/cmd/common"
+)
+
+const (
+	openEulerVendorName = "openEuler"
 )
 
 // RpmOS struct objects shall have information of the tools version to be installed
@@ -41,7 +46,7 @@ func (r *RpmOS) SetKubeEdgeVersion(version semver.Version) {
 // Information is used from https://www.digitalocean.com/community/tutorials/how-to-install-and-secure-the-mosquitto-mqtt-messaging-broker-on-centos-7
 func (r *RpmOS) InstallMQTT() error {
 	// check MQTT
-	cmd := NewCommand("ps aux |awk '/mosquitto/ {print $1}' | awk '/mosquit/ {print}'")
+	cmd := NewCommand("ps aux |awk '/mosquitto/ {print $11}' | awk '/mosquit/ {print}'")
 	if err := cmd.Exec(); err != nil {
 		return err
 	}
@@ -51,13 +56,24 @@ func (r *RpmOS) InstallMQTT() error {
 		return nil
 	}
 
-	// install MQTT
-	for _, command := range []string{
+	commands := []string{
 		"yum -y install epel-release",
 		"yum -y install mosquitto",
 		"systemctl start mosquitto",
 		"systemctl enable mosquitto",
-	} {
+	}
+
+	vendorName, err := getOSVendorName()
+	if err != nil {
+		fmt.Printf("Get OS vendor name failed: %v\n", err)
+	}
+	// epel-release package does not included in openEuler
+	if vendorName == openEulerVendorName {
+		commands = commands[1:]
+	}
+
+	// install MQTT
+	for _, command := range commands {
 		cmd := NewCommand(command)
 		if err := cmd.Exec(); err != nil {
 			return err
@@ -77,42 +93,30 @@ func (r *RpmOS) IsK8SComponentInstalled(kubeConfig, master string) error {
 // Untar's in the specified location /etc/kubeedge/ and then copies
 // the binary to excecutables' path (eg: /usr/local/bin)
 func (r *RpmOS) InstallKubeEdge(options types.InstallOptions) error {
-	arch := "amd64"
-	cmd := NewCommand("arch")
-	if err := cmd.Exec(); err != nil {
-		return err
-	}
-	result := cmd.GetStdOut()
-	switch result {
-	case "armv7l":
-		arch = OSArchARM32
-	case "aarch64":
-		arch = OSArchARM64
-	case "x86_64":
-		arch = OSArchAMD64
-	default:
-		return fmt.Errorf("can't support this architecture of RpmOS: %s", result)
-	}
-
-	return installKubeEdge(options, arch, r.KubeEdgeVersion)
+	return installKubeEdge(options, r.KubeEdgeVersion)
 }
 
 // RunEdgeCore starts edgecore with logs being captured
 func (r *RpmOS) RunEdgeCore() error {
-	return runEdgeCore(r.KubeEdgeVersion)
+	return runEdgeCore()
 }
 
 // KillKubeEdgeBinary will search for KubeEdge process and forcefully kill it
 func (r *RpmOS) KillKubeEdgeBinary(proc string) error {
-	return killKubeEdgeBinary(proc)
+	return KillKubeEdgeBinary(proc)
 }
 
 // IsKubeEdgeProcessRunning checks if the given process is running or not
 func (r *RpmOS) IsKubeEdgeProcessRunning(proc string) (bool, error) {
-	return isKubeEdgeProcessRunning(proc)
+	return IsKubeEdgeProcessRunning(proc)
 }
 
-// IsKubeEdgeProcessRunning checks if the given process is running or not
-func (r *RpmOS) IsProcessRunning(proc string) (bool, error) {
-	return isKubeEdgeProcessRunning(proc)
+func getOSVendorName() (string, error) {
+	cmd := NewCommand("cat /etc/os-release | grep -E \"^NAME=\" | awk -F'=' '{print $2}'")
+	if err := cmd.Exec(); err != nil {
+		return "", err
+	}
+	vendor := strings.Trim(cmd.GetStdOut(), "\"")
+
+	return vendor, nil
 }

@@ -22,6 +22,8 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	commonconst "github.com/kubeedge/kubeedge/common/constants"
 )
 
 var (
@@ -211,7 +213,7 @@ func TestDeleteSecret(t *testing.T) {
 func TestIsEdgeNode(t *testing.T) {
 	nodeName := nodes[0]
 	locationCache := LocationCache{}
-	locationCache.EdgeNodes.Store(nodeName, "OK")
+	locationCache.EdgeNodes.Store(nodeName, commonconst.MessageSuccessfulContent)
 
 	tests := []struct {
 		name     string
@@ -242,53 +244,6 @@ func TestIsEdgeNode(t *testing.T) {
 	}
 }
 
-// TestGetNodeStatus is function to test GetNodeStatus
-func TestGetNodeStatus(t *testing.T) {
-	nodeOK := nodes[0]
-	nodeUnknown := nodes[1]
-	locationCache := LocationCache{}
-	locationCache.EdgeNodes.Store(nodeOK, "OK")
-	locationCache.EdgeNodes.Store(nodeUnknown, "Unknown")
-
-	tests := []struct {
-		name     string
-		lc       *LocationCache
-		nodeName string
-		want     string
-		exist    bool
-	}{
-		{
-			name:     "TestGetNodeStatus() Case: Node status is OK",
-			lc:       &locationCache,
-			nodeName: nodeOK,
-			want:     "OK",
-			exist:    true,
-		},
-		{
-			name:     "TestGetNodeStatus() Case: Node status is Unknown",
-			lc:       &locationCache,
-			nodeName: nodeUnknown,
-			want:     "Unknown",
-			exist:    true,
-		},
-		{
-			name:     "TestGetNodeStatus() Case: Node not exist",
-			lc:       &locationCache,
-			nodeName: "notExistNode",
-			want:     "",
-			exist:    false,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got, exist := test.lc.GetNodeStatus(test.nodeName); !reflect.DeepEqual(got, test.want) || !reflect.DeepEqual(exist, test.exist) {
-				t.Errorf("Manager.TestGetNodeStatus() case failed: gotStatus = %v,gotExist = %v, wantStatus = %v.  wantExist: %v", got, exist, test.want, test.exist)
-			}
-		})
-	}
-}
-
 // TestUpdateEdgeNode is function to test UpdateEdgeNode
 func TestUpdateEdgeNode(t *testing.T) {
 	locationCache := LocationCache{}
@@ -298,25 +253,25 @@ func TestUpdateEdgeNode(t *testing.T) {
 	tests := []struct {
 		name string
 		lc   *LocationCache
-		want string
+		want bool
 	}{
 		{
 			name: "TestUpdateEdgeNode() Case: Node status update to OK",
 			lc:   &locationCache,
-			want: "OK",
+			want: true,
 		},
 		{
 			name: "TestUpdateEdgeNode() Case: Node status update to Unknown",
 			lc:   &locationCache,
-			want: "Unknown",
+			want: true,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			test.lc.UpdateEdgeNode(nodeName, test.want)
-			if got, _ := test.lc.EdgeNodes.Load(nodeName); !reflect.DeepEqual(got, test.want) {
-				t.Errorf("Manager.TestUpdateEdgeNode() case failed: got = %v, want = %v.", got, test.want)
+			test.lc.UpdateEdgeNode(nodeName)
+			if _, ok := test.lc.EdgeNodes.Load(nodeName); !ok {
+				t.Errorf("Manager.TestUpdateEdgeNode() case failed: got = %v, want = %v.", ok, test.want)
 			}
 		})
 	}
@@ -326,7 +281,7 @@ func TestUpdateEdgeNode(t *testing.T) {
 func TestDeleteNode(t *testing.T) {
 	locationCache := LocationCache{}
 	nodeName := nodes[0]
-	locationCache.EdgeNodes.Store(nodeName, "OK")
+	locationCache.EdgeNodes.Store(nodeName, commonconst.MessageSuccessfulContent)
 
 	tests := []struct {
 		name     string
@@ -353,267 +308,6 @@ func TestDeleteNode(t *testing.T) {
 			test.lc.DeleteNode(test.nodeName)
 			if _, exist := test.lc.EdgeNodes.Load(test.nodeName); !reflect.DeepEqual(exist, test.want) {
 				t.Errorf("Manager.TestDeleteNode() case failed: exist = %v, want = %v.", exist, test.want)
-			}
-		})
-	}
-}
-
-// TestAddOrUpdateEndpoints is function to test AddOrUpdateEndpoints
-func TestAddOrUpdateEndpoints(t *testing.T) {
-	locationCache := LocationCache{}
-	nodeName := nodes[0]
-
-	tests := []struct {
-		name string
-		lc   *LocationCache
-		ep   v1.Endpoints
-	}{
-		{
-			name: "TestAddOrUpdateEndpoints() Case: Add endpoints",
-			lc:   &locationCache,
-			ep: v1.Endpoints{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "ep1",
-					Namespace: "default",
-				},
-				Subsets: []v1.EndpointSubset{},
-			},
-		},
-		{
-			name: "TestAddOrUpdateEndpoints() Case: Update endpoints",
-			lc:   &locationCache,
-			ep: v1.Endpoints{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "ep1",
-					Namespace: "default",
-				},
-				Subsets: []v1.EndpointSubset{
-					{
-						Addresses: []v1.EndpointAddress{
-							{
-								IP:       "10.0.0.1",
-								NodeName: &nodeName,
-							},
-							{
-								IP:       "10.0.0.2",
-								NodeName: &nodeName,
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			test.lc.AddOrUpdateEndpoints(test.ep)
-			ep, _ := test.lc.endpoints.Load(test.ep.GetNamespace() + "/" + test.ep.GetName())
-			if !reflect.DeepEqual(ep, test.ep) {
-				t.Errorf("Manager.TestAddOrUpdateService() case failed: got: %v want: %v", ep, test.ep)
-			}
-		})
-	}
-}
-
-// TestDeleteEndpoints is function to test DeleteEndpoints
-func TestDeleteEndpoints(t *testing.T) {
-	locationCache := LocationCache{}
-	nodeName := nodes[0]
-	ep1 := v1.Endpoints{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "svc1",
-			Namespace: "default",
-		},
-		Subsets: []v1.EndpointSubset{
-			{
-				Addresses: []v1.EndpointAddress{
-					{
-						IP:       "10.0.0.1",
-						NodeName: &nodeName,
-					},
-					{
-						IP:       "10.0.0.2",
-						NodeName: &nodeName,
-					},
-				},
-			},
-		},
-	}
-
-	locationCache.endpoints.Store(ep1.GetNamespace()+"/"+ep1.GetName(), ep1)
-
-	tests := []struct {
-		name string
-		lc   *LocationCache
-		ep   v1.Endpoints
-	}{
-		{
-			name: "TestDeleteEndpoints() Case: Delete a exist service",
-			lc:   &locationCache,
-			ep:   ep1,
-		},
-		{
-			name: "TestDeleteEndpoints() Case: Delete not exist service",
-			lc:   &LocationCache{},
-			ep:   ep1,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			test.lc.DeleteEndpoints(test.ep)
-			if got, exist := test.lc.endpoints.Load(test.ep.GetNamespace() + "/" + test.ep.GetName()); exist {
-				t.Errorf("Manager.TestDeleteEndpoints() case failed: endpoints still exits after delete. %v", got)
-			}
-		})
-	}
-}
-
-// TestGetAllEndpoints is function to test GetAllEndpoints
-func TestGetAllEndpoints(t *testing.T) {
-	lc := LocationCache{}
-	nodeName := nodes[0]
-	eplist := []v1.Endpoints{
-		{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "ep1",
-				Namespace: "default",
-			},
-			Subsets: []v1.EndpointSubset{
-				{
-					Addresses: []v1.EndpointAddress{
-						{
-							IP:       "10.0.0.1",
-							NodeName: &nodeName,
-						},
-						{
-							IP:       "10.0.0.2",
-							NodeName: &nodeName,
-						},
-					},
-				},
-			},
-		},
-		{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "ep2",
-				Namespace: "default",
-			},
-			Subsets: []v1.EndpointSubset{
-				{
-					Addresses: []v1.EndpointAddress{
-						{
-							IP:       "10.0.0.3",
-							NodeName: &nodeName,
-						},
-						{
-							IP:       "10.0.0.4",
-							NodeName: &nodeName,
-						},
-					},
-				},
-			},
-		},
-	}
-
-	for _, ep := range eplist {
-		lc.endpoints.Store(ep.GetNamespace()+"/"+ep.GetName(), ep)
-	}
-
-	t.Run("TestGetAllEndpoints() Case: Get all endpoints", func(t *testing.T) {
-		got := lc.GetAllEndpoints()
-		if len(got) != len(eplist) {
-			t.Errorf("Manager.TestGetAllEndpoints() case failed: len(got): %v, len(eplist): %v", len(got), len(eplist))
-		}
-		m := map[string]v1.Endpoints{}
-		for _, ep := range got {
-			m[ep.GetNamespace()+"/"+ep.GetName()] = ep
-		}
-
-		for _, ep := range eplist {
-			if _, ok := m[ep.GetNamespace()+"/"+ep.GetName()]; !ok {
-				t.Errorf("Manager.TestGetAllEndpoints() case failed: endpoints not exist in GetAllEndpoints() result. got: %v want: %v ", got, ep)
-			}
-		}
-	})
-}
-
-// TestIsEndpointsUpdated is function to test IsEndpointsUpdated
-func TestIsEndpointsUpdated(t *testing.T) {
-	locationCache := LocationCache{}
-	nodeName := nodes[0]
-	ep1 := v1.Endpoints{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "ep1",
-			Namespace: "default",
-		},
-	}
-	ep2 := v1.Endpoints{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "ep1",
-			Namespace: "default",
-		},
-		Subsets: []v1.EndpointSubset{
-			{
-				Addresses: []v1.EndpointAddress{
-					{
-						IP:       "10.0.0.1",
-						NodeName: &nodeName,
-					},
-					{
-						IP:       "10.0.0.2",
-						NodeName: &nodeName,
-					},
-				},
-			},
-		},
-	}
-
-	locationCache.endpoints.Store(ep1.GetNamespace()+"/"+ep1.GetName(), ep1)
-	locationCache.endpoints.Store("invalid/endpoints", "invalidEndpoints")
-
-	tests := []struct {
-		name string
-		lc   *LocationCache
-		ep   v1.Endpoints
-		want bool
-	}{
-		{
-			name: "TestIsEndpointsUpdated() Case: No changed",
-			lc:   &locationCache,
-			ep:   ep1,
-			want: false,
-		},
-		{
-			name: "TestIsEndpointsUpdated() Case: Update subsets",
-			lc:   &locationCache,
-			ep:   ep2,
-			want: true,
-		},
-		{
-			name: "TestIsEndpointsUpdated() Case: Not found",
-			lc:   &LocationCache{},
-			ep:   ep1,
-			want: true,
-		},
-		{
-			name: "TestIsEndpointsUpdated() Case: Update a invalid value",
-			lc:   &locationCache,
-			ep: v1.Endpoints{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "endpoints",
-					Namespace: "invalid",
-				},
-			},
-			want: true,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := test.lc.IsEndpointsUpdated(test.ep); !reflect.DeepEqual(got, test.want) {
-				t.Errorf("Manager.TestIsEndpointsUpdated() case failed: got: %v, want: %v", got, test.want)
 			}
 		})
 	}

@@ -3,6 +3,7 @@ package synccontroller
 import (
 	"context"
 	"strconv"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -15,11 +16,11 @@ import (
 
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
-	"github.com/kubeedge/kubeedge/cloud/pkg/apis/reliablesyncs/v1alpha1"
+	"github.com/kubeedge/kubeedge/cloud/pkg/common/messagelayer"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
 	edgectrconst "github.com/kubeedge/kubeedge/cloud/pkg/edgecontroller/constants"
-	edgectrmessagelayer "github.com/kubeedge/kubeedge/cloud/pkg/edgecontroller/messagelayer"
 	commonconst "github.com/kubeedge/kubeedge/common/constants"
+	"github.com/kubeedge/kubeedge/pkg/apis/reliablesyncs/v1alpha1"
 	"github.com/kubeedge/kubeedge/pkg/metaserver/util"
 )
 
@@ -30,57 +31,68 @@ func (sctl *SyncController) manageObject(sync *v1alpha1.ObjectSync) {
 	if err != nil {
 		return
 	}
-	gvr := gv.WithResource(sync.Spec.ObjectKind)
+	resource := util.UnsafeKindToResource(sync.Spec.ObjectKind)
+	gvr := gv.WithResource(resource)
+	nodeName := getNodeName(sync.Name)
+	resourceType := strings.ToLower(sync.Spec.ObjectKind)
 
-	//ret, err := informers.GetInformersManager().GetDynamicSharedInformerFactory().ForResource(gvr).Lister().ByNamespace(sync.Namespace).Get(sync.Spec.ObjectName)
-	ret, err := sctl.kubeclient.Resource(gvr).Namespace(sync.Namespace).Get(context.TODO(), sync.Spec.ObjectName, metav1.GetOptions{})
+	lister, err := sctl.informerManager.GetLister(gvr)
 	if err != nil {
+		return
+	}
+
+	ret, err := lister.ByNamespace(sync.Namespace).Get(sync.Spec.ObjectName)
+
+	if apierrors.IsNotFound(err) {
+		sctl.gcOrphanedObjectSync(sync)
+		return
+	} else if err != nil || ret == nil {
 		klog.Errorf("failed to get obj(gvr:%v,namespace:%v,name:%v), %v", gvr, sync.Namespace, sync.Spec.ObjectName, err)
 		return
 	}
 
-	nodeName := getNodeName(sync.Name)
-	if ret != nil {
-		object, err = meta.Accessor(ret)
-		if err != nil {
-			return
-		}
-
-		syncObjUID := getObjectUID(sync.Name)
-		if syncObjUID != string(object.GetUID()) {
-			err = apierrors.NewNotFound(schema.GroupResource{
-				Group:    "",
-				Resource: sync.Spec.ObjectKind,
-			}, sync.Spec.ObjectName)
-		}
-	}
-
+	object, err = meta.Accessor(ret)
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			obj := &unstructured.Unstructured{}
-			obj.SetName(sync.Spec.ObjectName)
-			obj.SetUID(types.UID(getObjectUID(sync.Name)))
-			obj.SetNamespace(sync.Namespace)
-		} else {
-			klog.Errorf("Failed to manage pod sync of %s in namespace %s: %v", sync.Name, sync.Namespace, err)
-			return
-		}
+		return
 	}
-	sendEvents(err, nodeName, sync, sync.Spec.ObjectKind, object.GetResourceVersion(), object)
+
+	syncObjUID := getObjectUID(sync.Name)
+	if syncObjUID != string(object.GetUID()) {
+		sctl.gcOrphanedObjectSync(sync)
+		return
+	}
+
+	sendEvents(nodeName, sync, resourceType, object.GetResourceVersion(), object)
 }
 
-func sendEvents(err error, nodeName string, sync *v1alpha1.ObjectSync, resourceType string,
+// gcOrphanedObjectSync try to send delete message to the edge node
+// to make sure that the resource is deleted in the edge node. After the
+// message ACK is received by `cloudHub`, the objectSync will be deleted
+// directly in the `cloudHub`. But if message build failed, the objectSync
+// will be deleted directly in the `syncController`.
+func (sctl *SyncController) gcOrphanedObjectSync(sync *v1alpha1.ObjectSync) {
+	resourceType := strings.ToLower(sync.Spec.ObjectKind)
+	nodeName := getNodeName(sync.Name)
+	klog.V(4).Infof("%s: %s has been deleted in K8s, send the delete event to edge in sync loop", resourceType, sync.Spec.ObjectName)
+
+	object := &unstructured.Unstructured{}
+	object.SetNamespace(sync.Namespace)
+	object.SetName(sync.Spec.ObjectName)
+	object.SetUID(types.UID(getObjectUID(sync.Name)))
+	if msg := buildEdgeControllerMessage(nodeName, sync.Namespace, resourceType, sync.Spec.ObjectName, model.DeleteOperation, object); msg != nil {
+		beehiveContext.Send(commonconst.DefaultContextSendModuleName, *msg)
+	} else {
+		if err := sctl.crdclient.ReliablesyncsV1alpha1().ObjectSyncs(sync.Namespace).Delete(context.Background(), sync.Name, *metav1.NewDeleteOptions(0)); err != nil {
+			klog.Errorf("Failed to delete objectsync %s: %v", sync.Name, err)
+		}
+	}
+}
+
+func sendEvents(nodeName string, sync *v1alpha1.ObjectSync, resourceType string,
 	objectResourceVersion string, obj interface{}) {
 	runtimeObj := obj.(runtime.Object)
 	if err := util.SetMetaType(runtimeObj); err != nil {
 		klog.Warningf("failed to set metatype :%v", err)
-	}
-	if err != nil && apierrors.IsNotFound(err) {
-		//trigger the delete event
-		klog.Infof("%s: %s has been deleted in K8s, send the delete event to edge", resourceType, sync.Spec.ObjectName)
-		msg := buildEdgeControllerMessage(nodeName, sync.Namespace, resourceType, sync.Spec.ObjectName, model.DeleteOperation, obj)
-		beehiveContext.Send(commonconst.DefaultContextSendModuleName, *msg)
-		return
 	}
 
 	if sync.Status.ObjectResourceVersion == "" {
@@ -97,17 +109,18 @@ func sendEvents(err error, nodeName string, sync *v1alpha1.ObjectSync, resourceT
 }
 
 func buildEdgeControllerMessage(nodeName, namespace, resourceType, resourceName, operationType string, obj interface{}) *model.Message {
-	msg := model.NewMessage("")
-	resource, err := edgectrmessagelayer.BuildResource(nodeName, namespace, resourceType, resourceName)
+	resource, err := messagelayer.BuildResource(nodeName, namespace, resourceType, resourceName)
 	if err != nil {
 		klog.Warningf("build message resource failed with error: %s", err)
 		return nil
 	}
-	msg.BuildRouter(modules.EdgeControllerModuleName, edgectrconst.GroupResource, resource, operationType)
-	msg.Content = obj
 
 	resourceVersion := GetObjectResourceVersion(obj)
-	msg.SetResourceVersion(resourceVersion)
+
+	msg := model.NewMessage("").
+		BuildRouter(modules.EdgeControllerModuleName, edgectrconst.GroupResource, resource, operationType).
+		FillBody(obj).
+		SetResourceVersion(resourceVersion)
 
 	return msg
 }

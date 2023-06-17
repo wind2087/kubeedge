@@ -25,9 +25,9 @@ The cloud native and microservice architecture is becoming more and more popular
 ## Constraints and Assumptions
 1. No DNS services available for edge.
 2. The identification and authentication should be handled by microservices.
-3. When service communication between edge to edge, they may work offline. With the purpose to deliver a "expected result" to the user system, the service definition should be pushed down to the edge right after the definition operation. That is to say, the istio model may not be suitable for edge, in istio model, the service definition is pulled from K8S master when the service is invoked.
+3. When service communication between edge to edge, they may work offline. With the purpose to deliver an "expected result" to the user system, the service definition should be pushed down to the edge right after the definition operation. That is to say, the istio model may not be suitable for edge, in istio model, the service definition is pulled from K8S master when the service is invoked.
 4. Only support HTTP communication in the first step
-5. All edge nodes are in the same sub-network and they have the network reachability.
+5. All edge nodes are in the same subnetwork, and they have the network reachability.
 
 ## Use cases
 <img src="../images/proposals/service-design.png">
@@ -70,12 +70,12 @@ ServiceBus is in the same process with EdgeHub as a module
 ### Router
 Add two endpoints definition:
 
-|Endpoint|Type|Capability|
-|---|---|---|
-|ClusterIP|Target|Request Forward|
-|ServiceBus|Source|Request Forward, Service Discovery, Load Balance|
-|ServiceBus|Target|Request Forward|
-|Router|Source|Request Forward, Service Discovery, Load Balance|
+| Endpoint   | Type   | Capability                                       |
+|------------|--------|--------------------------------------------------|
+| ClusterIP  | Target | Request Forward                                  |
+| ServiceBus | Source | Request Forward, Service Discovery, Load Balance |
+| ServiceBus | Target | Request Forward                                  |
+| Router     | Source | Request Forward, Service Discovery, Load Balance |
 
 <img src="../images/proposals/router-design.png">
 
@@ -85,7 +85,7 @@ Add two endpoints definition:
 * R4: Users/Applications create a request.
 * R5: Router receives the request and forwards it to the target based on rule.
 
-Since Router fetches rules from DB, in later versions it can be started as a different process than edge-controller. Also it enables router to retrieve all the rules after process restarts.
+Since Router fetches rules from DB, in later versions it can be started as a different process than edge-controller. Also, it enables router to retrieve all the rules after process restarts.
 ### Router Low-level Design
 
 ### Providers

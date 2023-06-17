@@ -19,12 +19,29 @@
 # KubeEdge Authors:
 # To Get Detail Version Info for KubeEdge Project
 
-set -o errexit
-set -o nounset
-set -o pipefail
-
 YES="y"
 NO="n"
+
+kubeedge::golang::verify_golang_version() {
+  echo "go detail version: $(go version)"
+
+  goversion=$(go version |awk -F ' ' '{printf $3}' |sed 's/go//g')
+
+  echo "go version: $goversion"
+
+  X=$(echo $goversion|awk -F '.' '{printf $1}')
+  Y=$(echo $goversion|awk -F '.' '{printf $2}')
+
+  if [ $X -lt 1 ] ; then
+	  echo "go major version must >= 1, now is $X"
+	  exit 1
+  fi
+
+  if [ $Y -lt 16 ] ; then
+	  echo "go minor version must >= 16, now is $Y"
+	  exit 1
+  fi
+}
 
 kubeedge::version::get_version_info() {
 
@@ -131,7 +148,7 @@ kubeedge::golang::binaries_from_targets() {
 
 kubeedge::check::env() {
   errors=()
-  if [ -z $GOPATH ]; then
+  if [ -z $(go env GOPATH) ]; then
     errors+="GOPATH environment value not set"
   fi
 
@@ -152,7 +169,12 @@ ALL_BINARIES_AND_TARGETS=(
   admission:cloud/cmd/admission
   keadm:keadm/cmd/keadm
   edgecore:edge/cmd/edgecore
-  edgesite:edgesite/cmd/edgesite
+  edgesite-agent:edgesite/cmd/edgesite-agent
+  edgesite-server:edgesite/cmd/edgesite-server
+  csidriver:cloud/cmd/csidriver
+  iptablesmanager:cloud/cmd/iptablesmanager
+  edgemark:edge/cmd/edgemark
+  controllermanager:cloud/cmd/controllermanager
 )
 
 kubeedge::golang::get_target_by_binary() {
@@ -218,23 +240,6 @@ kubeedge::golang::build_binaries() {
 
 }
 
-
-KUBEEDGE_ALL_CROSS_BINARIES=(
-edgecore
-edgesite
-)
-
-kubeedge::golang::is_cross_build_binary() {
-  local key=$1
-  for bin in "${KUBEEDGE_ALL_CROSS_BINARIES[@]}" ; do
-    if [ "${bin}" == "${key}" ]; then
-      echo ${YES}
-      return
-    fi
-  done
-  echo ${NO}
-}
-
 KUBEEDGE_ALL_CROSS_GOARMS=(
 8
 7
@@ -262,18 +267,12 @@ kubeedge::golang::cross_build_place_binaries() {
         # Assume arguments starting with a dash are flags to pass to go.
         goarm="${arg##*GOARM}"
       else
-        if [ "$(kubeedge::golang::is_cross_build_binary ${arg})" == "${NO}" ]; then
-          echo "${arg} does not support cross build"
-          exit 1
-        fi
         targets+=("$(kubeedge::golang::get_target_by_binary $arg)")
       fi
   done
 
   if [[ ${#targets[@]} -eq 0 ]]; then
-    for bin in ${KUBEEDGE_ALL_CROSS_BINARIES[@]}; do
-        targets+=("$(kubeedge::golang::get_target_by_binary $bin)")
-    done
+    targets+=("${KUBEEDGE_ALL_TARGETS[@]}")
   fi
 
   if [ "$(kubeedge::golang::is_supported_goarm ${goarm})" == "${NO}" ]; then
@@ -289,15 +288,16 @@ kubeedge::golang::cross_build_place_binaries() {
 
   mkdir -p ${KUBEEDGE_OUTPUT_BINPATH}
   for bin in ${binaries[@]}; do
-    echo "cross buildding $bin GOARM${goarm}"
+    echo "cross building $bin GOARM${goarm}"
     local name="${bin##*/}"
     if [ "${goarm}" == "8" ]; then
       set -x
+      GOARM="" # need to clear the value since golang compiler doesn't allow this env when building the binary for ARMv8.
       GOARCH=arm64 GOOS="linux" CGO_ENABLED=1 CC=aarch64-linux-gnu-gcc go build -o ${KUBEEDGE_OUTPUT_BINPATH}/${name} -ldflags "$ldflags" $bin
       set +x
     elif [ "${goarm}" == "7" ]; then
       set -x
-      GOARCH=arm GOOS="linux" GOARM=${goarm} CGO_ENABLED=1 CC=arm-linux-gnueabi-gcc go build -o ${KUBEEDGE_OUTPUT_BINPATH}/${name} -ldflags "$ldflags" $bin
+      GOARCH=arm GOOS="linux" GOARM=${goarm} CGO_ENABLED=1 CC=arm-linux-gnueabihf-gcc go build -o ${KUBEEDGE_OUTPUT_BINPATH}/${name} -ldflags "$ldflags" $bin
       set +x
     fi
   done
@@ -305,7 +305,6 @@ kubeedge::golang::cross_build_place_binaries() {
 
 KUBEEDGE_ALL_SMALL_BINARIES=(
 edgecore
-edgesite
 )
 
 kubeedge::golang::is_small_build_binary() {
@@ -448,7 +447,6 @@ kubeedge::golang::run_test() {
   local profile=${PROFILE:-""}
   if [[ $profile ]]; then
     go test "-coverprofile=${profile}" ${testdirs[@]}
-    go tool cover -func=${profile}
   else
     go test ${testdirs[@]}
   fi

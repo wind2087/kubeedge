@@ -10,6 +10,9 @@ const (
 	DeviceControllerModuleName  = "devicecontroller"
 	DeviceControllerModuleGroup = "devicecontroller"
 
+	NodeUpgradeJobControllerModuleName  = "nodeupgradejobcontroller"
+	NodeUpgradeJobControllerModuleGroup = "nodeupgradejobcontroller"
+
 	SyncControllerModuleName  = "synccontroller"
 	SyncControllerModuleGroup = "synccontroller"
 
@@ -23,4 +26,11 @@ const (
 	RouterGroupName  = "router"
 
 	UserGroup = "user"
+
+	TunnelPort string = "tunnelport"
+
+	TunnelPortRecordAnnotationKey string = "tunnelportrecord.kubeedge.io"
+
+	RouterSourceEventBus   = "router_eventbus"
+	RouterSourceServiceBus = "router_servicebus"
 )

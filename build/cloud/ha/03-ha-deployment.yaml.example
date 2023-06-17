@@ -21,8 +21,6 @@ spec:
       nodeSelector: # configure the nodeSelector here to directly schedule pods to specific nodes
         [key]: [value]
       hostNetwork: true
-      readinessGates:
-        - conditionType: "kubeedge.io/CloudCoreIsLeader"
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -43,12 +41,23 @@ spec:
         - name: cloudcore
           image: kubeedge/cloudcore:{tag}
           imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
           ports:
             - containerPort: 10000
               name: cloudhub
               protocol: TCP
+            - containerPort: 10001
+              name: cloudhub-quic
+              protocol: TCP
             - containerPort: 10002
-              name: certandreadyz
+              name: cloudhub-https
+              protocol: TCP
+            - containerPort: 10003
+              name: cloudstream
+              protocol: TCP
+            - containerPort: 10004
+              name: tunnelport
               protocol: TCP
           resources:
             limits:

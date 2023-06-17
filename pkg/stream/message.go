@@ -21,20 +21,13 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"io/ioutil"
 
 	"k8s.io/klog/v2"
+
+	"github.com/kubeedge/kubeedge/common/constants"
 )
 
 type MessageType uint64
-
-const (
-	MessageTypeLogsConnect MessageType = iota
-	MessageTypeExecConnect
-	MessageTypeMetricConnect
-	MessageTypeData
-	MessageTypeRemoveConnect
-)
 
 func (m MessageType) String() string {
 	switch m {
@@ -76,7 +69,7 @@ func (m *Message) Bytes() []byte {
 }
 
 func (m *Message) String() string {
-	return fmt.Sprintf("MESSAGE: connectid %v MessageType %s", m.ConnectID, m.MessageType)
+	return fmt.Sprintf("MESSAGE: connectID %v messageType %s", m.ConnectID, m.MessageType)
 }
 
 func ReadMessageFromTunnel(r io.Reader) (*Message, error) {
@@ -89,11 +82,11 @@ func ReadMessageFromTunnel(r io.Reader) (*Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := ioutil.ReadAll(buf)
+	data, err := io.ReadAll(io.LimitReader(buf, constants.MaxRespBodyLength))
 	if err != nil {
 		return nil, err
 	}
-	klog.V(6).Infof("Receive Tunnel message Connectid %d messageType %s data:%v string:[%v]",
+	klog.V(6).Infof("Receive Tunnel message connectID %d messageType %s data:%v string:[%v]",
 		connectID, MessageType(messageType), data, string(data))
 	return &Message{
 		ConnectID:   connectID,

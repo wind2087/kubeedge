@@ -32,7 +32,7 @@ function check_kind {
   command -v kind >/dev/null 2>&1
   if [[ $? -ne 0 ]]; then
     echo "installing kind ."
-    GO111MODULE="on" go get sigs.k8s.io/kind@v0.9.0
+    GO111MODULE="on" go install sigs.k8s.io/kind@v0.12.0
     if [[ $? -ne 0 ]]; then
       echo "kind installed failed, exiting."
       exit 1
@@ -49,39 +49,41 @@ function check_kind {
 
 # check if golangci-lint installed
 function check_golangci-lint {
+  GOPATH="${GOPATH:-$(go env GOPATH)}"
   echo "checking golangci-lint"
+  export PATH=$PATH:$GOPATH/bin
+  expectedVersion="1.42.0"
   command -v golangci-lint >/dev/null 2>&1
   if [[ $? -ne 0 ]]; then
-    echo "installing golangci-lint ."
-    curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.30.0
+    install_golangci-lint
+  else
+    version=$(golangci-lint version)
+    if [[ $version =~ $expectedVersion ]]; then
+      echo -n "found golangci-lint, version: " && golangci-lint version
+    else
+      echo "golangci-lint version not matched, now version is $version, begin to install new version $expectedVersion"
+      install_golangci-lint
+    fi
+  fi
+}
+
+function install_golangci-lint {
+  echo "installing golangci-lint ."
+    curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b ${GOPATH}/bin v1.42.0
     if [[ $? -ne 0 ]]; then
       echo "golangci-lint installed failed, exiting."
       exit 1
     fi
 
     export PATH=$PATH:$GOPATH/bin
-  else
-    echo -n "found golangci-lint, version: " && golangci-lint version
-  fi
 }
 
-verify_go_version(){
-  if [[ -z "$(command -v go)" ]]; then
-    echo "Can't find 'go' in PATH, please fix and retry.
-See http://golang.org/doc/install for installation instructions."
+verify_containerd_installed(){
+  # verify the containerd installed
+  command -v containerd >/dev/null || {
+    echo "must install the containerd first"
     exit 1
-  fi
-
-  local go_version
-  IFS=" " read -ra go_version <<< "$(go version)"
-  local minimum_go_version
-  minimum_go_version=go1.12.1
-  if [[ "${minimum_go_version}" != $(echo -e "${minimum_go_version}\n${go_version[2]}" | sort -s -t. -k 1,1 -k 2,2n -k 3,3n | head -n1) && "${go_version[2]}" != "devel" ]]; then
-    echo "Detected go version: ${go_version[*]}.
-Kubernetes requires ${minimum_go_version} or greater.
-Please install ${minimum_go_version} or later."
-    exit 1
-  fi
+  }
 }
 
 verify_docker_installed(){
@@ -92,3 +94,15 @@ verify_docker_installed(){
   }
 }
 
+# install CNI plugins
+function install_cni_plugins() {
+  # install CNI plugins if not exist
+  if [ ! -f "/opt/cni/bin/loopback" ]; then
+    echo -e "install CNI plugins..."
+    mkdir -p /opt/cni/bin
+    wget https://github.com/containernetworking/plugins/releases/download/v1.1.1/cni-plugins-linux-amd64-v1.1.1.tgz
+    tar Cxzvf /opt/cni/bin cni-plugins-linux-amd64-v1.1.1.tgz
+  else
+    echo "CNI plugins already installed and no need to install"
+  fi
+}

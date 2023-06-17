@@ -290,7 +290,7 @@ func IsPodAvailable(pod *v1.Pod, minReadySeconds int32, now metav1.Time) bool {
 
 	c := GetPodReadyCondition(pod.Status)
 	minReadySecondsDuration := time.Duration(minReadySeconds) * time.Second
-	if minReadySeconds == 0 || !c.LastTransitionTime.IsZero() && c.LastTransitionTime.Add(minReadySecondsDuration).Before(now.Time) {
+	if minReadySeconds == 0 || (!c.LastTransitionTime.IsZero() && c.LastTransitionTime.Add(minReadySecondsDuration).Before(now.Time)) {
 		return true
 	}
 	return false
@@ -301,9 +301,25 @@ func IsPodReady(pod *v1.Pod) bool {
 	return IsPodReadyConditionTrue(pod.Status)
 }
 
+// IsPodTerminal returns true if a pod is terminal, all containers are stopped and cannot ever regress.
+func IsPodTerminal(pod *v1.Pod) bool {
+	return IsPodPhaseTerminal(pod.Status.Phase)
+}
+
+// IsPhaseTerminal returns true if the pod's phase is terminal.
+func IsPodPhaseTerminal(phase v1.PodPhase) bool {
+	return phase == v1.PodFailed || phase == v1.PodSucceeded
+}
+
 // IsPodReadyConditionTrue returns true if a pod is ready; false otherwise.
 func IsPodReadyConditionTrue(status v1.PodStatus) bool {
 	condition := GetPodReadyCondition(status)
+	return condition != nil && condition.Status == v1.ConditionTrue
+}
+
+// IsContainersReadyConditionTrue returns true if a pod is ready; false otherwise.
+func IsContainersReadyConditionTrue(status v1.PodStatus) bool {
+	condition := GetContainersReadyCondition(status)
 	return condition != nil && condition.Status == v1.ConditionTrue
 }
 
@@ -311,6 +327,13 @@ func IsPodReadyConditionTrue(status v1.PodStatus) bool {
 // Returns nil if the condition is not present.
 func GetPodReadyCondition(status v1.PodStatus) *v1.PodCondition {
 	_, condition := GetPodCondition(&status, v1.PodReady)
+	return condition
+}
+
+// GetContainersReadyCondition extracts the containers ready condition from the given status and returns that.
+// Returns nil if the condition is not present.
+func GetContainersReadyCondition(status v1.PodStatus) *v1.PodCondition {
+	_, condition := GetPodCondition(&status, v1.ContainersReady)
 	return condition
 }
 
@@ -364,15 +387,4 @@ func UpdatePodCondition(status *v1.PodStatus, condition *v1.PodCondition) bool {
 	status.Conditions[conditionIndex] = *condition
 	// Return true if one of the fields have changed.
 	return !isEqual
-}
-
-// GetPodPriority returns priority of the given pod.
-func GetPodPriority(pod *v1.Pod) int32 {
-	if pod.Spec.Priority != nil {
-		return *pod.Spec.Priority
-	}
-	// When priority of a running pod is nil, it means it was created at a time
-	// that there was no global default priority class and the priority class
-	// name of the pod was empty. So, we resolve to the static default priority.
-	return 0
 }

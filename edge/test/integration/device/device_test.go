@@ -68,9 +68,9 @@ var Client MQTT.Client
 
 func SubMessageReceived(client MQTT.Client, message MQTT.Message) {
 	var deviceState DeviceUpdates
-	topic := dtcommon.DeviceETPrefix + DeviceIDN + dtcommon.DeviceETStateUpdateSuffix + "/result"
+	topic := dtcommon.DeviceETPrefix + DeviceIDN + dtcommon.DeviceETStateUpdateResultSuffix
 	if message.Topic() == topic {
-		devicePayload := (message.Payload())
+		devicePayload := message.Payload()
 		err := json.Unmarshal(devicePayload, &deviceState)
 		if err != nil {
 			common.Fatalf("Unmarshall failed %s", err)
@@ -81,7 +81,7 @@ func SubMessageReceived(client MQTT.Client, message MQTT.Message) {
 func DeviceSubscribed(client MQTT.Client, message MQTT.Message) {
 	topic := dtcommon.MemETPrefix + ctx.Cfg.NodeID + dtcommon.MemETUpdateSuffix
 	if message.Topic() == topic {
-		devicePayload := (message.Payload())
+		devicePayload := message.Payload()
 		err := json.Unmarshal(devicePayload, MemDeviceUpdate)
 		if err != nil {
 			common.Fatalf("Unmarshall failed %s", err)
@@ -198,7 +198,7 @@ var _ = Describe("Event Bus Testing", func() {
 			}
 			Expect(TokenClient.Error()).NotTo(HaveOccurred())
 			devicetopic := dtcommon.MemETPrefix + ctx.Cfg.NodeID + dtcommon.MemETUpdateSuffix
-			topic := dtcommon.DeviceETPrefix + DeviceIDN + dtcommon.DeviceETStateUpdateSuffix + "/result"
+			topic := dtcommon.DeviceETPrefix + DeviceIDN + dtcommon.DeviceETStateUpdateResultSuffix
 			Token := Client.Subscribe(devicetopic, 0, DeviceSubscribed)
 			if Token.Wait() && TokenClient.Error() != nil {
 				common.Fatalf("Subscribe to Topic  Failed  %s, %s", TokenClient.Error(), topic)
@@ -219,7 +219,7 @@ var _ = Describe("Event Bus Testing", func() {
 		It("TC_TEST_EBUS_6: change the device status to online from eventbus", func() {
 			var message DeviceUpdate
 			message.State = "online"
-			topic := dtcommon.DeviceETPrefix + DeviceIDN + dtcommon.DeviceETStateUpdateSuffix + "/result"
+			topic := dtcommon.DeviceETPrefix + DeviceIDN + dtcommon.DeviceETStateUpdateResultSuffix
 			body, err := json.Marshal(message)
 			if err != nil {
 				common.Fatalf("Marshal failed %v", err)
@@ -248,7 +248,7 @@ var _ = Describe("Event Bus Testing", func() {
 		It("TC_TEST_EBUS_7: change the device status to unknown from eventbus", func() {
 			var message DeviceUpdate
 			message.State = "unknown"
-			topic := dtcommon.DeviceETPrefix + DeviceIDN + dtcommon.DeviceETStateUpdateSuffix + "/result"
+			topic := dtcommon.DeviceETPrefix + DeviceIDN + dtcommon.DeviceETStateUpdateResultSuffix
 			body, err := json.Marshal(message)
 			if err != nil {
 				common.Fatalf("Marshal failed %v", err)
@@ -276,7 +276,7 @@ var _ = Describe("Event Bus Testing", func() {
 		It("TC_TEST_EBUS_8: change the device status to offline from eventbus", func() {
 			var message DeviceUpdate
 			message.State = "offline"
-			topic := dtcommon.DeviceETPrefix + DeviceIDN + dtcommon.DeviceETStateUpdateSuffix + "/result"
+			topic := dtcommon.DeviceETPrefix + DeviceIDN + dtcommon.DeviceETStateUpdateResultSuffix
 			body, err := json.Marshal(message)
 			if err != nil {
 				common.Fatalf("Marshal failed %v", err)

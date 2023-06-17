@@ -5,11 +5,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
-const (
-	NodeRoleKey   = "node-role.kubernetes.io/edge"
-	NodeRoleValue = ""
-)
-
 // NodesManager manage all events of nodes by SharedInformer
 type NodesManager struct {
 	events chan watch.Event
@@ -23,7 +18,7 @@ func (nm *NodesManager) Events() chan watch.Event {
 // NewNodesManager create NodesManager by kube clientset and namespace
 func NewNodesManager(si cache.SharedIndexInformer) (*NodesManager, error) {
 	events := make(chan watch.Event)
-	rh := NewCommonResourceEventHandler(events)
+	rh := NewCommonResourceEventHandler(events, nil)
 	si.AddEventHandler(rh)
 
 	return &NodesManager{events: events}, nil

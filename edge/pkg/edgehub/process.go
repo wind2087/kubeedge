@@ -1,6 +1,7 @@
 package edgehub
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -12,19 +13,22 @@ import (
 	messagepkg "github.com/kubeedge/kubeedge/edge/pkg/common/message"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
 	"github.com/kubeedge/kubeedge/edge/pkg/edgehub/clients"
+	"github.com/kubeedge/kubeedge/edge/pkg/edgehub/common/msghandler"
 	"github.com/kubeedge/kubeedge/edge/pkg/edgehub/config"
 )
 
-const (
-	waitConnectionPeriod = time.Minute
-)
-
 var groupMap = map[string]string{
-	"resource": modules.MetaGroup,
-	"twin":     modules.TwinGroup,
-	"func":     modules.MetaGroup,
-	"user":     modules.BusGroup,
+	"twin": modules.TwinGroup,
+	"func": modules.MetaGroup,
+	"user": modules.BusGroup,
 }
+
+var (
+	// longThrottleLatency defines threshold for logging requests. All requests being
+	// throttled (via the provided rateLimiter) for more than longThrottleLatency will
+	// be logged.
+	longThrottleLatency = 1 * time.Second
+)
 
 func (eh *EdgeHub) initial() (err error) {
 	cloudHubClient, err := clients.GetClient()
@@ -37,11 +41,25 @@ func (eh *EdgeHub) initial() (err error) {
 	return nil
 }
 
-func (eh *EdgeHub) isSyncResponse(msgID string) bool {
+func isSyncResponse(msgID string) bool {
 	return msgID != ""
 }
 
-func (eh *EdgeHub) dispatch(message model.Message) error {
+func init() {
+	handler := &defaultHandler{}
+	msghandler.RegisterHandler(handler)
+}
+
+type defaultHandler struct {
+}
+
+func (*defaultHandler) Filter(message *model.Message) bool {
+	group := message.GetGroup()
+	return group == messagepkg.ResourceGroupName || group == messagepkg.TwinGroupName ||
+		group == messagepkg.FuncGroupName || group == messagepkg.UserGroupName
+}
+
+func (*defaultHandler) Process(message *model.Message, clientHub clients.Adapter) error {
 	group := message.GetGroup()
 	md := ""
 	switch group {
@@ -53,18 +71,30 @@ func (eh *EdgeHub) dispatch(message model.Message) error {
 		md = modules.MetaGroup
 	case messagepkg.UserGroupName:
 		md = modules.BusGroup
-	default:
-		klog.Warningf("msg_group not found")
-		return fmt.Errorf("msg_group not found")
 	}
 
-	isResponse := eh.isSyncResponse(message.GetParentID())
+	isResponse := isSyncResponse(message.GetParentID())
 	if isResponse {
-		beehiveContext.SendResp(message)
+		beehiveContext.SendResp(*message)
 		return nil
 	}
+	if group == messagepkg.UserGroupName && message.GetSource() == "router_eventbus" {
+		beehiveContext.Send(modules.EventBusModuleName, *message)
+	} else if group == messagepkg.UserGroupName && message.GetSource() == "router_servicebus" {
+		beehiveContext.Send(modules.ServiceBusModuleName, *message)
+	} else {
+		beehiveContext.SendToGroup(md, *message)
+	}
+	return nil
+}
 
-	beehiveContext.SendToGroup(md, message)
+func (eh *EdgeHub) dispatch(message model.Message) error {
+	// handler for msg.
+	err := msghandler.ProcessHandler(message, eh.chClient)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -97,7 +127,6 @@ func (eh *EdgeHub) sendToCloud(message model.Message) error {
 	err := eh.chClient.Send(message)
 	eh.keeperLock.Unlock()
 	if err != nil {
-		klog.Errorf("failed to send message: %v", err)
 		return fmt.Errorf("failed to send message, error: %v", err)
 	}
 
@@ -112,10 +141,16 @@ func (eh *EdgeHub) routeToCloud() {
 			return
 		default:
 		}
-		message, err := beehiveContext.Receive(ModuleNameEdgeHub)
+		message, err := beehiveContext.Receive(modules.EdgeHubModuleName)
 		if err != nil {
 			klog.Errorf("failed to receive message from edge: %v", err)
 			time.Sleep(time.Second)
+			continue
+		}
+
+		err = eh.tryThrottle(message.GetID())
+		if err != nil {
+			klog.Errorf("msgID: %s, client rate limiter returned an error: %v ", message.GetID(), err)
 			continue
 		}
 
@@ -138,7 +173,7 @@ func (eh *EdgeHub) keepalive() {
 		default:
 		}
 		msg := model.NewMessage("").
-			BuildRouter(ModuleNameEdgeHub, "resource", "node", messagepkg.OperationKeepalive).
+			BuildRouter(modules.EdgeHubModuleName, "resource", "node", messagepkg.OperationKeepalive).
 			FillBody("ping")
 
 		// post message to cloud hub
@@ -154,6 +189,9 @@ func (eh *EdgeHub) keepalive() {
 }
 
 func (eh *EdgeHub) pubConnectInfo(isConnected bool) {
+	// update connected info
+	connect.SetConnected(isConnected)
+
 	// var info model.Message
 	content := connect.CloudConnected
 	if !isConnected {
@@ -174,4 +212,22 @@ func (eh *EdgeHub) ifRotationDone() {
 			eh.reconnectChan <- struct{}{}
 		}
 	}
+}
+
+func (eh *EdgeHub) tryThrottle(msgID string) error {
+	now := time.Now()
+
+	err := eh.rateLimiter.Wait(context.TODO())
+	if err != nil {
+		return err
+	}
+
+	latency := time.Since(now)
+
+	message := fmt.Sprintf("Waited for %v due to client-side throttling, msgID: %s", latency, msgID)
+	if latency > longThrottleLatency {
+		klog.V(2).Info(message)
+	}
+
+	return nil
 }

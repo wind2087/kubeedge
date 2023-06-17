@@ -8,10 +8,10 @@ import (
 
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
-	"github.com/kubeedge/kubeedge/edge/pkg/metamanager"
+	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
 )
 
-const (
+var (
 	syncPeriod         = 10 * time.Millisecond
 	syncMsgRespTimeout = 1 * time.Minute
 )
@@ -24,12 +24,11 @@ type CoreInterface interface {
 	NodesGetter
 	NodeStatusGetter
 	SecretsGetter
-	EndpointsGetter
-	ServiceGetter
+	ServiceAccountTokenGetter
 	PersistentVolumesGetter
 	PersistentVolumeClaimsGetter
 	VolumeAttachmentsGetter
-	ListenerGetter
+	LeasesGetter
 }
 
 type metaClient struct {
@@ -56,18 +55,12 @@ func (m *metaClient) Secrets(namespace string) SecretsInterface {
 	return newSecrets(namespace, m.send)
 }
 
+func (m *metaClient) ServiceAccountToken() ServiceAccountTokenInterface {
+	return newServiceAccountToken(m.send)
+}
+
 func (m *metaClient) PodStatus(namespace string) PodStatusInterface {
 	return newPodStatus(namespace, m.send)
-}
-
-//New creates a new metaclient
-func (m *metaClient) Endpoints(namespace string) EndpointsInterface {
-	return newEndpoints(namespace, m.send)
-}
-
-// New Services metaClient
-func (m *metaClient) Services(namespace string) ServiceInterface {
-	return newServices(namespace, m.send)
 }
 
 // New PersistentVolumes metaClient
@@ -85,9 +78,8 @@ func (m *metaClient) VolumeAttachments(namespace string) VolumeAttachmentsInterf
 	return newVolumeAttachments(namespace, m.send)
 }
 
-// New Listener metaClient
-func (m *metaClient) Listener() ListenInterface {
-	return newListener(m.send)
+func (m *metaClient) Leases(namespace string) LeasesInterface {
+	return newLeases(namespace, m.send)
 }
 
 // New creates new metaclient
@@ -115,10 +107,10 @@ func (s *send) SendSync(message *model.Message) (*model.Message, error) {
 	var resp model.Message
 	retries := 0
 	err = wait.Poll(syncPeriod, syncMsgRespTimeout, func() (bool, error) {
-		resp, err = beehiveContext.SendSync(metamanager.MetaManagerModuleName, *message, syncMsgRespTimeout)
+		resp, err = beehiveContext.SendSync(modules.MetaManagerModuleName, *message, syncMsgRespTimeout)
 		retries++
 		if err == nil {
-			klog.V(2).Infof("send sync message %s successed and response: %v", message.GetResource(), resp)
+			klog.V(4).Infof("send sync message %s succeed and response: %v", message.GetResource(), resp)
 			return true, nil
 		}
 		if retries < 3 {
@@ -131,5 +123,13 @@ func (s *send) SendSync(message *model.Message) (*model.Message, error) {
 }
 
 func (s *send) Send(message *model.Message) {
-	beehiveContext.Send(metamanager.MetaManagerModuleName, *message)
+	beehiveContext.Send(modules.MetaManagerModuleName, *message)
+}
+
+func SetSyncPeriod(time time.Duration) {
+	syncPeriod = time
+}
+
+func SetSyncMsgRespTimeout(time time.Duration) {
+	syncMsgRespTimeout = time
 }

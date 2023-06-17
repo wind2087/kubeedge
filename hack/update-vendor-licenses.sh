@@ -31,14 +31,13 @@
 # KubeEdge Authors:
 # - File derived from kubernetes v1.19.0-beta.2
 # - Changed KUBE_ROOT value to use absolute path
-# - skip license for k8s.io/klog
 
 
 set -o errexit
 set -o nounset
 set -o pipefail
 
-KUBE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+KUBE_ROOT=$(dirname "${BASH_SOURCE[0]}")/..
 source "${KUBE_ROOT}/hack/lib/init.sh"
 
 export LANG=C
@@ -193,8 +192,10 @@ if [ -f "${LICENSE_ROOT}/LICENSE" ]; then
   mv "${TMP_LICENSE_FILE}" "${TMP_LICENSES_DIR}/LICENSE"
 fi
 
+# Capture all module dependencies
+modules=$(go list -m -json all | jq -r .Path | sort -f)
 # Loop through every vendored package
-for PACKAGE in $(go list -m -json all | jq -r .Path | sort -f); do
+for PACKAGE in ${modules}; do
   if [[ -e "staging/src/${PACKAGE}" ]]; then
     echo "${PACKAGE} is a staging package, skipping" >&2
     continue
@@ -203,27 +204,15 @@ for PACKAGE in $(go list -m -json all | jq -r .Path | sort -f); do
     echo "${PACKAGE} doesn't exist in ${DEPS_DIR}, skipping" >&2
     continue
   fi
-  if [[ "${PACKAGE}" = "sigs.k8s.io/structured-merge-diff" ]]; then
-    # this package doesn't exist, but has v3 subdirectory as a different package
-    # so it can't be  filtered by the previous rule
-    # temporarily treat this way until find out a better rule
-    echo "${PACKAGE}, temporarily skipping" >&2
-    continue
+  # if there are no files vendored under this package...
+  if [[ -z "$(find "${DEPS_DIR}/${PACKAGE}" -mindepth 1 -maxdepth 1 -type f)" ]]; then
+    # and we have the same number of submodules as subdirectories...
+    if [[ "$(find "${DEPS_DIR}/${PACKAGE}/" -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq "$(echo "${modules}" | grep -cE "^${PACKAGE}/")" ]]; then
+      echo "Only submodules of ${PACKAGE} are vendored, skipping" >&2
+      continue
+    fi
   fi
-  if [[ "${PACKAGE}" = "github.com/cespare/xxhash" ]]; then
-    # there are 2 versions v1 and v2 under 2 folders indirectly used
-    # so it can't be filtered by the previous rule
-    # temporarily treat this way until find out a better rule
-    echo "${PACKAGE}, temporarily skipping" >&2
-    continue
-  fi
-  if [[ "${PACKAGE}" = "k8s.io/klog" ]]; then
-    # this package doesn't use, but has v2 subdirectory as a different package
-    # so it can't be  filtered by the previous rule
-    # temporarily treat this way until find out a better rule
-    echo "${PACKAGE}, temporarily skipping" >&2
-    continue
-  fi
+  
   echo "${PACKAGE}"
 
   process_content "${PACKAGE}" LICENSE

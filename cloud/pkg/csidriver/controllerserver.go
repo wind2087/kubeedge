@@ -20,6 +20,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/golang/protobuf/jsonpb"
@@ -108,7 +109,11 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 	}
 
 	klog.V(4).Infof("create volume result: %v", result)
-	data := result.GetContent().(string)
+	data, ok := result.GetContent().(string)
+	if !ok {
+		klog.Errorf("content is not string type: %v", result.GetContent())
+		return nil, fmt.Errorf("content type %T is not string", result.GetContent())
+	}
 
 	if result.GetOperation() == model.ResponseErrorOperation {
 		klog.Errorf("create volume with error: %s", data)
@@ -122,7 +127,7 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 	}
 
 	response := &csi.CreateVolumeResponse{}
-	err = json.Unmarshal([]byte(decodeBytes), response)
+	err = json.Unmarshal(decodeBytes, response)
 	if err != nil {
 		klog.Errorf("create volume unmarshal with error: %v", err)
 		return nil, err
@@ -192,7 +197,11 @@ func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 	}
 
 	klog.V(4).Infof("delete volume result: %v", result)
-	data := result.GetContent().(string)
+	data, ok := result.GetContent().(string)
+	if !ok {
+		klog.Errorf("content is not string type: %v", result.GetContent())
+		return nil, fmt.Errorf("content type %T is not string", result.GetContent())
+	}
 
 	if msg.GetOperation() == model.ResponseErrorOperation {
 		klog.Errorf("delete volume with error: %s", data)
@@ -206,7 +215,7 @@ func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 	}
 
 	deleteVolumeResponse := &csi.DeleteVolumeResponse{}
-	err = json.Unmarshal([]byte(decodeBytes), deleteVolumeResponse)
+	err = json.Unmarshal(decodeBytes, deleteVolumeResponse)
 	if err != nil {
 		klog.Errorf("delete volume unmarshal with error: %v", err)
 		return nil, err
@@ -271,7 +280,11 @@ func (cs *controllerServer) ControllerPublishVolume(ctx context.Context, req *cs
 	}
 
 	klog.V(4).Infof("controller publish volume result: %v", result)
-	data := result.GetContent().(string)
+	data, ok := result.GetContent().(string)
+	if !ok {
+		klog.Errorf("content is not string type: %v", result.GetContent())
+		return nil, fmt.Errorf("content type %T is not string", result.GetContent())
+	}
 
 	if msg.GetOperation() == model.ResponseErrorOperation {
 		klog.Errorf("controller publish volume with error: %s", data)
@@ -285,7 +298,7 @@ func (cs *controllerServer) ControllerPublishVolume(ctx context.Context, req *cs
 	}
 
 	controllerPublishVolumeResponse := &csi.ControllerPublishVolumeResponse{}
-	err = json.Unmarshal([]byte(decodeBytes), controllerPublishVolumeResponse)
+	err = json.Unmarshal(decodeBytes, controllerPublishVolumeResponse)
 	if err != nil {
 		klog.Errorf("controller publish volume unmarshal with error: %v", err)
 		return nil, err
@@ -350,7 +363,11 @@ func (cs *controllerServer) ControllerUnpublishVolume(ctx context.Context, req *
 	}
 
 	klog.V(4).Infof("controller Unpublish Volume result: %v", result)
-	data := result.GetContent().(string)
+	data, ok := result.GetContent().(string)
+	if !ok {
+		klog.Errorf("content is not string type: %v", result.GetContent())
+		return nil, fmt.Errorf("content type %T is not string", result.GetContent())
+	}
 
 	if msg.GetOperation() == model.ResponseErrorOperation {
 		klog.Errorf("controller Unpublish Volume with error: %s", data)
@@ -364,7 +381,7 @@ func (cs *controllerServer) ControllerUnpublishVolume(ctx context.Context, req *
 	}
 
 	controllerUnpublishVolumeResponse := &csi.ControllerUnpublishVolumeResponse{}
-	err = json.Unmarshal([]byte(decodeBytes), controllerUnpublishVolumeResponse)
+	err = json.Unmarshal(decodeBytes, controllerUnpublishVolumeResponse)
 	if err != nil {
 		klog.Errorf("controller Unpublish Volume unmarshal with error: %v", err)
 		return nil, err
@@ -442,4 +459,8 @@ func (cs *controllerServer) DeleteSnapshot(ctx context.Context, req *csi.DeleteS
 
 func (cs *controllerServer) ListSnapshots(ctx context.Context, req *csi.ListSnapshotsRequest) (*csi.ListSnapshotsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "ListSnapshots is not yet implemented")
+}
+
+func (cs *controllerServer) ControllerGetVolume(context.Context, *csi.ControllerGetVolumeRequest) (*csi.ControllerGetVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "ControllerGetVolume is not yet implemented")
 }

@@ -16,14 +16,14 @@ import (
 
 	"github.com/kubeedge/beehive/pkg/core"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
-	"github.com/kubeedge/kubeedge/cloud/pkg/apis/reliablesyncs/v1alpha1"
-	crdClientset "github.com/kubeedge/kubeedge/cloud/pkg/client/clientset/versioned"
-	reliablesyncslisters "github.com/kubeedge/kubeedge/cloud/pkg/client/listers/reliablesyncs/v1alpha1"
 	keclient "github.com/kubeedge/kubeedge/cloud/pkg/common/client"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/informers"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
 	"github.com/kubeedge/kubeedge/cloud/pkg/synccontroller/config"
 	configv1alpha1 "github.com/kubeedge/kubeedge/pkg/apis/componentconfig/cloudcore/v1alpha1"
+	"github.com/kubeedge/kubeedge/pkg/apis/reliablesyncs/v1alpha1"
+	crdClientset "github.com/kubeedge/kubeedge/pkg/client/clientset/versioned"
+	reliablesyncslisters "github.com/kubeedge/kubeedge/pkg/client/listers/reliablesyncs/v1alpha1"
 )
 
 // SyncController use beehive context message layer
@@ -31,6 +31,7 @@ type SyncController struct {
 	enable bool
 	//client
 	crdclient crdClientset.Interface
+
 	// lister
 	nodeLister              corelisters.NodeLister
 	objectSyncLister        reliablesyncslisters.ObjectSyncLister
@@ -39,17 +40,22 @@ type SyncController struct {
 	kubeclient dynamic.Interface
 
 	informersSyncedFuncs []cache.InformerSynced
+
+	informerManager informers.Manager
 }
+
+var _ core.Module = (*SyncController)(nil)
 
 func newSyncController(enable bool) *SyncController {
 	var sctl = &SyncController{
-		enable:     enable,
-		crdclient:  keclient.GetCRDClient(),
-		kubeclient: keclient.GetDynamicClient(),
+		enable:          enable,
+		crdclient:       keclient.GetCRDClient(),
+		kubeclient:      keclient.GetDynamicClient(),
+		informerManager: informers.GetInformersManager(),
 	}
 	// informer factory
-	k8sInformerFactory := informers.GetInformersManager().GetK8sInformerFactory()
-	crdInformerFactory := informers.GetInformersManager().GetCRDInformerFactory()
+	k8sInformerFactory := informers.GetInformersManager().GetKubeInformerFactory()
+	crdInformerFactory := informers.GetInformersManager().GetKubeEdgeInformerFactory()
 
 	objectSyncsInformer := crdInformerFactory.Reliablesyncs().V1alpha1().ObjectSyncs()
 	clusterObjectSyncsInformer := crdInformerFactory.Reliablesyncs().V1alpha1().ClusterObjectSyncs()
@@ -106,7 +112,7 @@ func (sctl *SyncController) Start() {
 func (sctl *SyncController) reconcile() {
 	allClusterObjectSyncs, err := sctl.clusterObjectSyncLister.List(labels.Everything())
 	if err != nil {
-		klog.Errorf("Filed to list all the ClusterObjectSyncs: %v", err)
+		klog.Errorf("Failed to list all the ClusterObjectSyncs: %v", err)
 	}
 	sctl.manageClusterObjectSync(allClusterObjectSyncs)
 
@@ -115,8 +121,6 @@ func (sctl *SyncController) reconcile() {
 		klog.Errorf("Failed to list all the ObjectSyncs: %v", err)
 	}
 	sctl.manageObjectSync(allObjectSyncs)
-
-	sctl.manageCreateFailedObject()
 }
 
 // Compare the cluster scope objects that have been persisted to the edge with the cluster scope objects in K8s,
@@ -143,6 +147,7 @@ func (sctl *SyncController) deleteObjectSyncs() {
 		isGarbage, err := sctl.checkObjectSync(sync)
 		if err != nil {
 			klog.Errorf("failed to check ObjectSync outdated, %s", err)
+			continue
 		}
 		if isGarbage {
 			klog.Infof("ObjectSync %s will be deleted since node %s has been deleted", sync.Name, nodeName)

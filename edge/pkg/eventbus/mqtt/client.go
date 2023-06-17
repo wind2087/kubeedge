@@ -1,19 +1,13 @@
 package mqtt
 
 import (
-	"encoding/base64"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	MQTT "github.com/eclipse/paho.mqtt.golang"
 	"k8s.io/klog/v2"
 
-	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
-	"github.com/kubeedge/beehive/pkg/core/model"
-	messagepkg "github.com/kubeedge/kubeedge/edge/pkg/common/message"
-	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
 	"github.com/kubeedge/kubeedge/edge/pkg/eventbus/common/util"
 	"github.com/kubeedge/kubeedge/edge/pkg/eventbus/dao"
 )
@@ -58,9 +52,13 @@ var (
 
 // Client struct
 type Client struct {
-	MQTTUrl string
-	PubCli  MQTT.Client
-	SubCli  MQTT.Client
+	MQTTUrl     string
+	PubClientID string
+	SubClientID string
+	Username    string
+	Password    string
+	PubCli      MQTT.Client
+	SubCli      MQTT.Client
 }
 
 // AccessInfo that deliver between edge-hub and cloud-hub
@@ -112,25 +110,8 @@ func onSubConnect(client MQTT.Client) {
 // OnSubMessageReceived msg received callback
 func OnSubMessageReceived(client MQTT.Client, msg MQTT.Message) {
 	klog.Infof("OnSubMessageReceived receive msg from topic: %s", msg.Topic())
-	// for "$hw/events/device/+/twin/+", "$hw/events/node/+/membership/get", send to twin
-	// for other, send to hub
-	// for "SYS/dis/upload_records", no need to base64 topic
-	var target string
-	var message *model.Message
-	if strings.HasPrefix(msg.Topic(), "$hw/events/device") || strings.HasPrefix(msg.Topic(), "$hw/events/node") {
-		target = modules.TwinGroup
-		resource := base64.URLEncoding.EncodeToString([]byte(msg.Topic()))
-		// routing key will be $hw.<project_id>.events.user.bus.response.cluster.<cluster_id>.node.<node_id>.<base64_topic>
-		message = model.NewMessage("").BuildRouter(modules.BusGroup, modules.UserGroup,
-			resource, messagepkg.OperationResponse).FillBody(string(msg.Payload()))
-	} else {
-		target = modules.HubGroup
-		message = model.NewMessage("").BuildRouter(modules.BusGroup, modules.UserGroup,
-			msg.Topic(), "upload").FillBody(string(msg.Payload()))
-	}
 
-	klog.Info(fmt.Sprintf("Received msg from mqttserver, deliver to %s with resource %s", target, message.GetResource()))
-	beehiveContext.SendToGroup(target, *message)
+	NewMessageMux().Dispatch(msg.Topic(), msg.Payload())
 }
 
 // InitSubClient init sub client
@@ -140,13 +121,16 @@ func (mq *Client) InitSubClient() {
 	if right > 10 {
 		right = 10
 	}
-	subID := fmt.Sprintf("hub-client-sub-%s", timeStr[0:right])
-	subOpts := util.HubClientInit(mq.MQTTUrl, subID, "", "")
+	// if SubClientID is NOT set, we need to generate it by ourselves.
+	if mq.SubClientID == "" {
+		mq.SubClientID = fmt.Sprintf("hub-client-sub-%s", timeStr[0:right])
+	}
+	subOpts := util.HubClientInit(mq.MQTTUrl, mq.SubClientID, mq.Username, mq.Password)
 	subOpts.OnConnect = onSubConnect
 	subOpts.AutoReconnect = false
 	subOpts.OnConnectionLost = onSubConnectionLost
 	mq.SubCli = MQTT.NewClient(subOpts)
-	util.LoopConnect(subID, mq.SubCli)
+	util.LoopConnect(mq.SubClientID, mq.SubCli)
 	klog.Info("finish hub-client sub")
 }
 
@@ -157,11 +141,14 @@ func (mq *Client) InitPubClient() {
 	if right > 10 {
 		right = 10
 	}
-	pubID := fmt.Sprintf("hub-client-pub-%s", timeStr[0:right])
-	pubOpts := util.HubClientInit(mq.MQTTUrl, pubID, "", "")
+	// if PubClientID is NOT set, we need to generate it by ourselves.
+	if mq.PubClientID == "" {
+		mq.PubClientID = fmt.Sprintf("hub-client-pub-%s", timeStr[0:right])
+	}
+	pubOpts := util.HubClientInit(mq.MQTTUrl, mq.PubClientID, mq.Username, mq.Password)
 	pubOpts.OnConnectionLost = onPubConnectionLost
 	pubOpts.AutoReconnect = false
 	mq.PubCli = MQTT.NewClient(pubOpts)
-	util.LoopConnect(pubID, mq.PubCli)
+	util.LoopConnect(mq.PubClientID, mq.PubCli)
 	klog.Info("finish hub-client pub")
 }

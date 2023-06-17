@@ -2,7 +2,7 @@ package listener
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -14,6 +14,8 @@ import (
 	routerConfig "github.com/kubeedge/kubeedge/cloud/pkg/router/config"
 	"github.com/kubeedge/kubeedge/cloud/pkg/router/utils"
 )
+
+const MaxMessageBytes = 12 * (1 << 20)
 
 var (
 	RestHandlerInstance = &RestHandler{}
@@ -76,7 +78,11 @@ func (rh *RestHandler) RemoveListener(key interface{}) {
 func (rh *RestHandler) matchedPath(uri string) (string, bool) {
 	var candidateRes string
 	rh.handlers.Range(func(key, value interface{}) bool {
-		pathReg := key.(string)
+		pathReg, ok := key.(string)
+		if !ok {
+			klog.Errorf("key type %T error", key)
+			return true
+		}
 		if match := utils.IsMatch(pathReg, uri); match {
 			if candidateRes != "" && utils.RuleContains(pathReg, candidateRes) {
 				return true
@@ -122,7 +128,8 @@ func (rh *RestHandler) httpHandler(w http.ResponseWriter, r *http.Request) {
 		klog.Errorf("invalid convert to Handle. match path: %s", matchPath)
 		return
 	}
-	b, err := ioutil.ReadAll(r.Body)
+	aReaderCloser := http.MaxBytesReader(w, r.Body, MaxMessageBytes)
+	b, err := io.ReadAll(aReaderCloser)
 	if err != nil {
 		klog.Errorf("request error, write result: %v", err)
 		w.WriteHeader(http.StatusBadRequest)
@@ -142,20 +149,23 @@ func (rh *RestHandler) httpHandler(w http.ResponseWriter, r *http.Request) {
 
 		v, err := handle(params)
 		if err != nil {
-			//w.WriteHeader(http.StatusInternalServerError)
-			//_, err := w.Write([]byte(err.Error()))
-			//klog.Warningf("operation timeout, msg id: %s, write result: %v", msgID, err)
+			klog.Errorf("handle request error, msg id: %s, err: %v", msgID, err)
 			return
 		}
 		response, ok := v.(*http.Response)
 		if !ok {
-			klog.Errorf("response convert error, msg id: %s, reason: %v", msgID, err)
+			klog.Errorf("response convert error, msg id: %s", msgID)
 			return
 		}
-		body, err := ioutil.ReadAll(response.Body)
+		body, err := io.ReadAll(io.LimitReader(response.Body, MaxMessageBytes))
 		if err != nil {
 			klog.Errorf("response body read error, msg id: %s, reason: %v", msgID, err)
 			return
+		}
+		for key, values := range response.Header {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
 		}
 		w.WriteHeader(response.StatusCode)
 		if _, err = w.Write(body); err != nil {

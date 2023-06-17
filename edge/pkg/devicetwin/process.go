@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -43,9 +44,9 @@ func (dt *DeviceTwin) RegisterDTModule(name string) {
 func (dt *DeviceTwin) distributeMsg(m interface{}) error {
 	msg, ok := m.(model.Message)
 	if !ok {
-		klog.Errorf("Distribute message, msg is nil")
-		return errors.New("Distribute message, msg is nil")
+		return errors.New("distribute message, msg is nil")
 	}
+
 	message := dttype.DTMessage{Msg: &msg}
 	if message.Msg.GetParentID() != "" {
 		klog.Infof("Send msg to the %s module in twin", dtcommon.CommModule)
@@ -55,8 +56,9 @@ func (dt *DeviceTwin) distributeMsg(m interface{}) error {
 		}
 	}
 	if !classifyMsg(&message) {
-		return errors.New("Not found action")
+		return errors.New("not found action")
 	}
+
 	if ActionModuleMap == nil {
 		initActionModuleMap()
 	}
@@ -68,8 +70,9 @@ func (dt *DeviceTwin) distributeMsg(m interface{}) error {
 			return err
 		}
 	} else {
-		klog.Info("Not found deal module for msg")
-		return errors.New("Not found deal module for msg")
+		err := fmt.Errorf("not found deal module for msg, action: %s", message.Action)
+		klog.Errorf(err.Error())
+		return err
 	}
 
 	return nil
@@ -106,6 +109,7 @@ func initActionModuleMap() {
 	ActionModuleMap[dtcommon.Disconnected] = dtcommon.CommModule
 	ActionModuleMap[dtcommon.LifeCycle] = dtcommon.CommModule
 	ActionModuleMap[dtcommon.Confirm] = dtcommon.CommModule
+	ActionModuleMap[dtcommon.MetaDeviceOperation] = dtcommon.DMIModule
 }
 
 // SyncSqlite sync sqlite
@@ -260,12 +264,25 @@ func classifyMsg(message *dttype.DTMessage) bool {
 			return true
 		}
 		return false
+	} else if strings.Compare(msgSource, "meta") == 0 {
+		switch message.Msg.Content.(type) {
+		case []byte:
+			klog.Info("Message content type is []byte, no need to marshal again")
+		default:
+			content, err := json.Marshal(message.Msg.Content)
+			if err != nil {
+				return false
+			}
+			message.Msg.Content = content
+		}
+		message.Action = dtcommon.MetaDeviceOperation
+		return true
 	}
 	return false
 }
 
 func (dt *DeviceTwin) runDeviceTwin() {
-	moduleNames := []string{dtcommon.MemModule, dtcommon.TwinModule, dtcommon.DeviceModule, dtcommon.CommModule}
+	moduleNames := []string{dtcommon.MemModule, dtcommon.TwinModule, dtcommon.DeviceModule, dtcommon.CommModule, dtcommon.DMIModule}
 	for _, v := range moduleNames {
 		dt.RegisterDTModule(v)
 		go dt.DTModules[v].Start()

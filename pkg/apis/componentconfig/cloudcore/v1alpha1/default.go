@@ -18,14 +18,11 @@ package v1alpha1
 
 import (
 	"path"
-	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
-	componentbaseconfig "k8s.io/component-base/config"
 
 	"github.com/kubeedge/kubeedge/common/constants"
-	metaconfig "github.com/kubeedge/kubeedge/pkg/apis/componentconfig/meta/v1alpha1"
 )
 
 // NewDefaultCloudCoreConfig returns a full CloudCoreConfig object
@@ -37,18 +34,23 @@ func NewDefaultCloudCoreConfig() *CloudCoreConfig {
 			Kind:       Kind,
 			APIVersion: path.Join(GroupName, APIVersion),
 		},
+		CommonConfig: &CommonConfig{
+			TunnelPort: constants.ServerPort,
+			MonitorServer: MonitorServer{
+				BindAddress:     "127.0.0.1:9091",
+				EnableProfiling: false,
+			},
+		},
 		KubeAPIConfig: &KubeAPIConfig{
-			Master:      "",
 			ContentType: constants.DefaultKubeContentType,
-			QPS:         constants.DefaultKubeQPS,
-			Burst:       constants.DefaultKubeBurst,
-			KubeConfig:  constants.DefaultKubeConfig,
+			QPS:         5 * constants.DefaultNodeLimit,
+			Burst:       10 * constants.DefaultNodeLimit,
 		},
 		Modules: &Modules{
 			CloudHub: &CloudHub{
 				Enable:                  true,
 				KeepaliveInterval:       30,
-				NodeLimit:               1000,
+				NodeLimit:               constants.DefaultNodeLimit,
 				TLSCAFile:               constants.DefaultCAFile,
 				TLSCAKeyFile:            constants.DefaultCAKeyFile,
 				TLSCertFile:             constants.DefaultCertFile,
@@ -82,55 +84,11 @@ func NewDefaultCloudCoreConfig() *CloudCoreConfig {
 			EdgeController: &EdgeController{
 				Enable:              true,
 				NodeUpdateFrequency: 10,
-				Buffer: &EdgeControllerBuffer{
-					UpdatePodStatus:            constants.DefaultUpdatePodStatusBuffer,
-					UpdateNodeStatus:           constants.DefaultUpdateNodeStatusBuffer,
-					QueryConfigMap:             constants.DefaultQueryConfigMapBuffer,
-					QuerySecret:                constants.DefaultQuerySecretBuffer,
-					QueryService:               constants.DefaultQueryServiceBuffer,
-					QueryEndpoints:             constants.DefaultQueryEndpointsBuffer,
-					PodEvent:                   constants.DefaultPodEventBuffer,
-					ConfigMapEvent:             constants.DefaultConfigMapEventBuffer,
-					SecretEvent:                constants.DefaultSecretEventBuffer,
-					ServiceEvent:               constants.DefaultServiceEventBuffer,
-					EndpointsEvent:             constants.DefaultEndpointsEventBuffer,
-					RulesEvent:                 constants.DefaultRulesEventBuffer,
-					RuleEndpointsEvent:         constants.DefaultRuleEndpointsEventBuffer,
-					QueryPersistentVolume:      constants.DefaultQueryPersistentVolumeBuffer,
-					QueryPersistentVolumeClaim: constants.DefaultQueryPersistentVolumeClaimBuffer,
-					QueryVolumeAttachment:      constants.DefaultQueryVolumeAttachmentBuffer,
-					QueryNode:                  constants.DefaultQueryNodeBuffer,
-					UpdateNode:                 constants.DefaultUpdateNodeBuffer,
-					DeletePod:                  constants.DefaultDeletePodBuffer,
-				},
-				Context: &ControllerContext{
-					SendModule:       metaconfig.ModuleNameCloudHub,
-					SendRouterModule: metaconfig.ModuleNameRouter,
-					ReceiveModule:    metaconfig.ModuleNameEdgeController,
-					ResponseModule:   metaconfig.ModuleNameCloudHub,
-				},
-				Load: &EdgeControllerLoad{
-					UpdatePodStatusWorkers:            constants.DefaultUpdatePodStatusWorkers,
-					UpdateNodeStatusWorkers:           constants.DefaultUpdateNodeStatusWorkers,
-					QueryConfigMapWorkers:             constants.DefaultQueryConfigMapWorkers,
-					QuerySecretWorkers:                constants.DefaultQuerySecretWorkers,
-					QueryServiceWorkers:               constants.DefaultQueryServiceWorkers,
-					QueryEndpointsWorkers:             constants.DefaultQueryEndpointsWorkers,
-					QueryPersistentVolumeWorkers:      constants.DefaultQueryPersistentVolumeWorkers,
-					QueryPersistentVolumeClaimWorkers: constants.DefaultQueryPersistentVolumeClaimWorkers,
-					QueryVolumeAttachmentWorkers:      constants.DefaultQueryVolumeAttachmentWorkers,
-					QueryNodeWorkers:                  constants.DefaultQueryNodeWorkers,
-					UpdateNodeWorkers:                 constants.DefaultUpdateNodeWorkers,
-					DeletePodWorkers:                  constants.DefaultDeletePodWorkers,
-				},
+				Buffer:              getDefaultEdgeControllerBuffer(constants.DefaultNodeLimit),
+				Load:                getDefaultEdgeControllerLoad(constants.DefaultNodeLimit),
 			},
 			DeviceController: &DeviceController{
 				Enable: true,
-				Context: &ControllerContext{
-					SendModule:     metaconfig.ModuleNameCloudHub,
-					ReceiveModule:  metaconfig.ModuleNameDeviceController,
-					ResponseModule: metaconfig.ModuleNameCloudHub,
-				},
 				Buffer: &DeviceControllerBuffer{
 					UpdateDeviceStatus: constants.DefaultUpdateDeviceStatusBuffer,
 					DeviceEvent:        constants.DefaultDeviceEventBuffer,
@@ -138,6 +96,16 @@ func NewDefaultCloudCoreConfig() *CloudCoreConfig {
 				},
 				Load: &DeviceControllerLoad{
 					UpdateDeviceStatusWorkers: constants.DefaultUpdateDeviceStatusWorkers,
+				},
+			},
+			NodeUpgradeJobController: &NodeUpgradeJobController{
+				Enable: false,
+				Buffer: &NodeUpgradeJobControllerBuffer{
+					UpdateNodeUpgradeJobStatus: constants.DefaultNodeUpgradeJobStatusBuffer,
+					NodeUpgradeJobEvent:        constants.DefaultNodeUpgradeJobEventBuffer,
+				},
+				Load: &NodeUpgradeJobControllerLoad{
+					NodeUpgradeJobWorkers: constants.DefaultNodeUpgradeJobWorkers,
 				},
 			},
 			SyncController: &SyncController{
@@ -163,18 +131,113 @@ func NewDefaultCloudCoreConfig() *CloudCoreConfig {
 				Port:        9443,
 				RestTimeout: 60,
 			},
-		},
-		LeaderElection: &componentbaseconfig.LeaderElectionConfiguration{
-			LeaderElect:       false,
-			LeaseDuration:     metav1.Duration{Duration: 15 * time.Second},
-			RenewDeadline:     metav1.Duration{Duration: 10 * time.Second},
-			RetryPeriod:       metav1.Duration{Duration: 2 * time.Second},
-			ResourceLock:      "endpointsleases",
-			ResourceNamespace: constants.KubeEdgeNameSpace,
-			ResourceName:      "cloudcorelease",
+			IptablesManager: &IptablesManager{
+				Enable: true,
+				Mode:   InternalMode,
+			},
 		},
 	}
 	return c
+}
+
+// NodeLimit is a maximum number of edge node that can connect to the single CloudCore
+// instance. You should take this parameter seriously, because this parameter is closely
+// related to the number of goroutines for upstream message processing.
+// getDefaultEdgeControllerLoad return Default EdgeControllerLoad based on nodeLimit
+func getDefaultEdgeControllerLoad(nodeLimit int32) *EdgeControllerLoad {
+	return &EdgeControllerLoad{
+		UpdatePodStatusWorkers:            constants.DefaultUpdatePodStatusWorkers,
+		UpdateNodeStatusWorkers:           constants.DefaultUpdateNodeStatusWorkers,
+		QueryConfigMapWorkers:             constants.DefaultQueryConfigMapWorkers,
+		QuerySecretWorkers:                constants.DefaultQuerySecretWorkers,
+		QueryPersistentVolumeWorkers:      constants.DefaultQueryPersistentVolumeWorkers,
+		QueryPersistentVolumeClaimWorkers: constants.DefaultQueryPersistentVolumeClaimWorkers,
+		QueryVolumeAttachmentWorkers:      constants.DefaultQueryVolumeAttachmentWorkers,
+		QueryNodeWorkers:                  nodeLimit,
+		CreateNodeWorkers:                 constants.DefaultCreateNodeWorkers,
+		PatchNodeWorkers:                  100 + nodeLimit/50,
+		UpdateNodeWorkers:                 constants.DefaultUpdateNodeWorkers,
+		PatchPodWorkers:                   constants.DefaultPatchPodWorkers,
+		DeletePodWorkers:                  constants.DefaultDeletePodWorkers,
+		CreateLeaseWorkers:                nodeLimit,
+		QueryLeaseWorkers:                 constants.DefaultQueryLeaseWorkers,
+		UpdateRuleStatusWorkers:           constants.DefaultUpdateRuleStatusWorkers,
+		ServiceAccountTokenWorkers:        constants.DefaultServiceAccountTokenWorkers,
+	}
+}
+
+// getDefaultEdgeControllerBuffer return Default EdgeControllerBuffer based on nodeLimit
+func getDefaultEdgeControllerBuffer(nodeLimit int32) *EdgeControllerBuffer {
+	return &EdgeControllerBuffer{
+		UpdatePodStatus:            constants.DefaultUpdatePodStatusBuffer,
+		UpdateNodeStatus:           constants.DefaultUpdateNodeStatusBuffer,
+		QueryConfigMap:             constants.DefaultQueryConfigMapBuffer,
+		QuerySecret:                constants.DefaultQuerySecretBuffer,
+		PodEvent:                   constants.DefaultPodEventBuffer,
+		ConfigMapEvent:             constants.DefaultConfigMapEventBuffer,
+		SecretEvent:                constants.DefaultSecretEventBuffer,
+		RulesEvent:                 constants.DefaultRulesEventBuffer,
+		RuleEndpointsEvent:         constants.DefaultRuleEndpointsEventBuffer,
+		QueryPersistentVolume:      constants.DefaultQueryPersistentVolumeBuffer,
+		QueryPersistentVolumeClaim: constants.DefaultQueryPersistentVolumeClaimBuffer,
+		QueryVolumeAttachment:      constants.DefaultQueryVolumeAttachmentBuffer,
+		CreateNode:                 constants.DefaultCreateNodeBuffer,
+		PatchNode:                  1024 + nodeLimit/2,
+		QueryNode:                  1024 + nodeLimit,
+		UpdateNode:                 constants.DefaultUpdateNodeBuffer,
+		PatchPod:                   constants.DefaultPatchPodBuffer,
+		DeletePod:                  constants.DefaultDeletePodBuffer,
+		CreateLease:                1024 + nodeLimit,
+		QueryLease:                 constants.DefaultQueryLeaseBuffer,
+		ServiceAccountToken:        constants.DefaultServiceAccountTokenBuffer,
+	}
+}
+
+func AdjustCloudCoreConfig(c *CloudCoreConfig) bool {
+	changed := false
+	nodeLimit := c.Modules.CloudHub.NodeLimit
+
+	if c.KubeAPIConfig.QPS != 5*nodeLimit {
+		changed = true
+		c.KubeAPIConfig.QPS = 5 * nodeLimit
+	}
+
+	if c.KubeAPIConfig.Burst != 10*nodeLimit {
+		changed = true
+		c.KubeAPIConfig.Burst = 10 * nodeLimit
+	}
+
+	if c.Modules.EdgeController.Load.QueryNodeWorkers < nodeLimit {
+		changed = true
+		c.Modules.EdgeController.Load.QueryNodeWorkers = nodeLimit
+	}
+
+	if c.Modules.EdgeController.Load.PatchNodeWorkers < 100+nodeLimit/50 {
+		changed = true
+		c.Modules.EdgeController.Load.PatchNodeWorkers = 100 + nodeLimit/50
+	}
+
+	if c.Modules.EdgeController.Load.CreateLeaseWorkers < nodeLimit {
+		changed = true
+		c.Modules.EdgeController.Load.CreateLeaseWorkers = nodeLimit
+	}
+
+	if c.Modules.EdgeController.Buffer.PatchNode < 1024+nodeLimit/2 {
+		changed = true
+		c.Modules.EdgeController.Buffer.PatchNode = 1024 + nodeLimit/2
+	}
+
+	if c.Modules.EdgeController.Buffer.QueryNode < 1024+nodeLimit {
+		changed = true
+		c.Modules.EdgeController.Buffer.QueryNode = 1024 + nodeLimit
+	}
+
+	if c.Modules.EdgeController.Buffer.CreateLease < 1024+nodeLimit {
+		changed = true
+		c.Modules.EdgeController.Buffer.CreateLease = 1024 + nodeLimit
+	}
+
+	return changed
 }
 
 // NewMinCloudCoreConfig returns a min CloudCoreConfig object
@@ -185,10 +248,6 @@ func NewMinCloudCoreConfig() *CloudCoreConfig {
 		TypeMeta: metav1.TypeMeta{
 			Kind:       Kind,
 			APIVersion: path.Join(GroupName, APIVersion),
-		},
-		KubeAPIConfig: &KubeAPIConfig{
-			Master:     "",
-			KubeConfig: constants.DefaultKubeConfig,
 		},
 		Modules: &Modules{
 			CloudHub: &CloudHub{
@@ -219,9 +278,10 @@ func NewMinCloudCoreConfig() *CloudCoreConfig {
 				Port:        9443,
 				RestTimeout: 60,
 			},
-		},
-		LeaderElection: &componentbaseconfig.LeaderElectionConfiguration{
-			LeaderElect: false,
+			IptablesManager: &IptablesManager{
+				Enable: true,
+				Mode:   InternalMode,
+			},
 		},
 	}
 }

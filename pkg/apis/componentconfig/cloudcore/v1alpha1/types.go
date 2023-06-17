@@ -20,22 +20,42 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	componentbaseconfig "k8s.io/component-base/config"
-
-	metaconfig "github.com/kubeedge/kubeedge/pkg/apis/componentconfig/meta/v1alpha1"
 )
 
 // CloudCoreConfig indicates the config of cloudCore which get from cloudCore config file
 type CloudCoreConfig struct {
 	metav1.TypeMeta
+	// CommonConfig indicates common config for all modules
+	// +Required
+	CommonConfig *CommonConfig `json:"commonConfig,omitempty"`
 	// KubeAPIConfig indicates the kubernetes cluster info which cloudCore will connected
 	// +Required
 	KubeAPIConfig *KubeAPIConfig `json:"kubeAPIConfig,omitempty"`
 	// Modules indicates cloudCore modules config
 	// +Required
 	Modules *Modules `json:"modules,omitempty"`
-	// Configuration for LeaderElection
-	LeaderElection *componentbaseconfig.LeaderElectionConfiguration `json:"leaderelection,omitempty"`
+	// FeatureGates is a map of feature names to bools that enable or disable alpha/experimental features.
+	FeatureGates map[string]bool `json:"featureGates,omitempty"`
+}
+
+// CommonConfig indicates common config for all modules
+type CommonConfig struct {
+	// TunnelPort indicates the port that the cloudcore tunnel listened
+	TunnelPort int `json:"tunnelPort,omitempty"`
+
+	// MonitorServer holds config that exposes prometheus metrics and pprof
+	MonitorServer MonitorServer `json:"monitorServer,omitempty"`
+}
+
+// MonitorServer indicates MonitorServer config
+type MonitorServer struct {
+	// BindAddress is the IP address and port for the monitor server to serve on,
+	// defaulting to 127.0.0.1:9091 (set to 0.0.0.0 for all interfaces)
+	BindAddress string `json:"bindAddress,omitempty"`
+
+	// EnableProfiling enables profiling via web interface on /debug/pprof handler.
+	// Profiling handlers will be handled by monitor server.
+	EnableProfiling bool `json:"enableProfiling,omitempty"`
 }
 
 // KubeAPIConfig indicates the configuration for interacting with k8s server
@@ -48,7 +68,7 @@ type KubeAPIConfig struct {
 	// ContentType indicates the ContentType of message transmission when interacting with k8s
 	// default "application/vnd.kubernetes.protobuf"
 	ContentType string `json:"contentType,omitempty"`
-	// QPS to while talking with kubernetes apiserve
+	// QPS to while talking with kubernetes apiserver
 	// default 100
 	QPS int32 `json:"qps,omitempty"`
 	// Burst to use while talking with kubernetes apiserver
@@ -68,6 +88,8 @@ type Modules struct {
 	EdgeController *EdgeController `json:"edgeController,omitempty"`
 	// DeviceController indicates DeviceController module config
 	DeviceController *DeviceController `json:"deviceController,omitempty"`
+	// NodeUpgradeJobController indicates NodeUpgradeJobController module config
+	NodeUpgradeJobController *NodeUpgradeJobController `json:"nodeUpgradeJobController,omitempty"`
 	// SyncController indicates SyncController module config
 	SyncController *SyncController `json:"syncController,omitempty"`
 	// DynamicController indicates DynamicController module config
@@ -76,6 +98,8 @@ type Modules struct {
 	CloudStream *CloudStream `json:"cloudStream,omitempty"`
 	// Router indicates router module config
 	Router *Router `json:"router,omitempty"`
+	// IptablesManager indicates iptables module config
+	IptablesManager *IptablesManager `json:"iptablesManager,omitempty"`
 }
 
 // CloudHub indicates the config of CloudHub module.
@@ -85,11 +109,11 @@ type CloudHub struct {
 	// Enable indicates whether CloudHub is enabled, if set to false (for debugging etc.),
 	// skip checking other CloudHub configs.
 	// default true
-	Enable bool `json:"enable,omitempty"`
+	Enable bool `json:"enable"`
 	// KeepaliveInterval indicates keep-alive interval (second)
 	// default 30
 	KeepaliveInterval int32 `json:"keepaliveInterval,omitempty"`
-	// NodeLimit indicates node limit
+	// NodeLimit is a maximum number of edge node that can connect to the single CloudCore
 	// default 1000
 	NodeLimit int32 `json:"nodeLimit,omitempty"`
 	// TLSCAFile indicates ca file path
@@ -133,7 +157,7 @@ type CloudHub struct {
 type CloudHubQUIC struct {
 	// Enable indicates whether enable quic protocol
 	// default false
-	Enable bool `json:"enable,omitempty"`
+	Enable bool `json:"enable"`
 	// Address set server ip address
 	// default 0.0.0.0
 	Address string `json:"address,omitempty"`
@@ -149,7 +173,7 @@ type CloudHubQUIC struct {
 type CloudHubUnixSocket struct {
 	// Enable indicates whether enable unix domain socket protocol
 	// default true
-	Enable bool `json:"enable,omitempty"`
+	Enable bool `json:"enable"`
 	// Address indicates unix domain socket address
 	// default "unix:///var/lib/kubeedge/kubeedge.sock"
 	Address string `json:"address,omitempty"`
@@ -159,7 +183,7 @@ type CloudHubUnixSocket struct {
 type CloudHubWebSocket struct {
 	// Enable indicates whether enable websocket protocol
 	// default true
-	Enable bool `json:"enable,omitempty"`
+	Enable bool `json:"enable"`
 	// Address indicates server ip address
 	// default 0.0.0.0
 	Address string `json:"address,omitempty"`
@@ -172,7 +196,7 @@ type CloudHubWebSocket struct {
 type CloudHubHTTPS struct {
 	// Enable indicates whether enable Https protocol
 	// default true
-	Enable bool `json:"enable,omitempty"`
+	Enable bool `json:"enable"`
 	// Address indicates server ip address
 	// default 0.0.0.0
 	Address string `json:"address,omitempty"`
@@ -186,14 +210,12 @@ type EdgeController struct {
 	// Enable indicates whether EdgeController is enabled,
 	// if set to false (for debugging etc.), skip checking other EdgeController configs.
 	// default true
-	Enable bool `json:"enable,omitempty"`
+	Enable bool `json:"enable"`
 	// NodeUpdateFrequency indicates node update frequency (second)
 	// default 10
 	NodeUpdateFrequency int32 `json:"nodeUpdateFrequency,omitempty"`
 	// Buffer indicates k8s resource buffer
 	Buffer *EdgeControllerBuffer `json:"buffer,omitempty"`
-	// Context indicates send,receive,response modules for EdgeController module
-	Context *ControllerContext `json:"context,omitempty"`
 	// Load indicates EdgeController load
 	Load *EdgeControllerLoad `json:"load,omitempty"`
 }
@@ -212,12 +234,6 @@ type EdgeControllerBuffer struct {
 	// QuerySecret indicates the buffer of query secret
 	// default 1024
 	QuerySecret int32 `json:"querySecret,omitempty"`
-	// QueryService indicates the buffer of query service
-	// default 1024
-	QueryService int32 `json:"queryService,omitempty"`
-	// QueryEndpoints indicates the buffer of query endpoint
-	// default 1024
-	QueryEndpoints int32 `json:"queryEndpoints,omitempty"`
 	// PodEvent indicates the buffer of pod event
 	// default 1
 	PodEvent int32 `json:"podEvent,omitempty"`
@@ -227,12 +243,6 @@ type EdgeControllerBuffer struct {
 	// SecretEvent indicates the buffer of secret event
 	// default 1
 	SecretEvent int32 `json:"secretEvent,omitempty"`
-	// ServiceEvent indicates the buffer of service event
-	// default 1
-	ServiceEvent int32 `json:"serviceEvent,omitempty"`
-	// EndpointsEvent indicates the buffer of endpoint event
-	// default 1
-	EndpointsEvent int32 `json:"endpointsEvent,omitempty"`
 	// RulesEvent indicates the buffer of rule event
 	// default 1
 	RulesEvent int32 `json:"rulesEvent,omitempty"`
@@ -248,27 +258,33 @@ type EdgeControllerBuffer struct {
 	// QueryVolumeAttachment indicates the buffer of query volume attachment
 	// default 1024
 	QueryVolumeAttachment int32 `json:"queryVolumeAttachment,omitempty"`
+	// CreateNode indicates the buffer of create node
+	// default 1024
+	CreateNode int32 `json:"createNode,omitempty"`
+	// PatchNode indicates the buffer of patch node
+	// default 1024
+	PatchNode int32 `json:"patchNode,omitempty"`
 	// QueryNode indicates the buffer of query node
 	// default 1024
 	QueryNode int32 `json:"queryNode,omitempty"`
 	// UpdateNode indicates the buffer of update node
 	// default 1024
 	UpdateNode int32 `json:"updateNode,omitempty"`
+	// PatchPod indicates the buffer of patch pod
+	// default 1024
+	PatchPod int32 `json:"patchPod,omitempty"`
 	// DeletePod indicates the buffer of delete pod message from edge
 	// default 1024
 	DeletePod int32 `json:"deletePod,omitempty"`
-}
-
-// ControllerContext indicates the message layer context for all controllers
-type ControllerContext struct {
-	// SendModule indicates which module will send message to
-	SendModule metaconfig.ModuleName `json:"sendModule,omitempty"`
-	// SendRouterModule indicates which module will send router message to
-	SendRouterModule metaconfig.ModuleName `json:"sendRouterModule,omitempty"`
-	// ReceiveModule indicates which module will receive message from
-	ReceiveModule metaconfig.ModuleName `json:"receiveModule,omitempty"`
-	// ResponseModule indicates which module will response message to
-	ResponseModule metaconfig.ModuleName `json:"responseModule,omitempty"`
+	// CreateLease indicates the buffer of create lease message from edge
+	// default 1024
+	CreateLease int32 `json:"createLease,omitempty"`
+	// QueryLease indicates the buffer of query lease message from edge
+	// default 1024
+	QueryLease int32 `json:"queryLease,omitempty"`
+	// ServiceAccount indicates the buffer of service account token
+	// default 1024
+	ServiceAccountToken int32 `json:"serviceAccountToken,omitempty"`
 }
 
 // EdgeControllerLoad indicates the EdgeController load
@@ -285,12 +301,6 @@ type EdgeControllerLoad struct {
 	// QuerySecretWorkers indicates the load of query secret workers
 	// default 4
 	QuerySecretWorkers int32 `json:"querySecretWorkers,omitempty"`
-	// QueryServiceWorkers indicates the load of query service workers
-	// default 4
-	QueryServiceWorkers int32 `json:"queryServiceWorkers,omitempty"`
-	// QueryEndpointsWorkers indicates the load of query endpoint workers
-	// default 4
-	QueryEndpointsWorkers int32 `json:"queryEndpointsWorkers,omitempty"`
 	// QueryPersistentVolumeWorkers indicates the load of query persistent volume workers
 	// default 4
 	QueryPersistentVolumeWorkers int32 `json:"queryPersistentVolumeWorkers,omitempty"`
@@ -300,15 +310,36 @@ type EdgeControllerLoad struct {
 	// QueryVolumeAttachmentWorkers indicates the load of query volume attachment workers
 	// default 4
 	QueryVolumeAttachmentWorkers int32 `json:"queryVolumeAttachmentWorkers,omitempty"`
+	// CreateNodeWorkers indicates the load of create node workers
+	// default 4
+	CreateNodeWorkers int32 `json:"createNodeWorkers,omitempty"`
+	// PatchNodeWorkers indicates the load of patch node workers
+	// default 4
+	PatchNodeWorkers int32 `json:"patchNodeWorkers,omitempty"`
 	// QueryNodeWorkers indicates the load of query node workers
 	// default 4
 	QueryNodeWorkers int32 `json:"queryNodeWorkers,omitempty"`
 	// UpdateNodeWorkers indicates the load of update node workers
 	// default 4
 	UpdateNodeWorkers int32 `json:"updateNodeWorkers,omitempty"`
+	// PatchPodWorkers indicates the load of patch pod workers
+	// default 4
+	PatchPodWorkers int32 `json:"patchPodWorkers,omitempty"`
 	// DeletePodWorkers indicates the load of delete pod workers
 	// default 4
 	DeletePodWorkers int32 `json:"deletePodWorkers,omitempty"`
+	// CreateLeaseWorkers indicates the load of create lease workers
+	// default 4
+	CreateLeaseWorkers int32 `json:"createLeaseWorkers,omitempty"`
+	// QueryLeaseWorkers indicates the load of query lease workers
+	// default 4
+	QueryLeaseWorkers int32 `json:"queryLeaseWorkers,omitempty"`
+	// UpdateRuleStatusWorkers indicates the load of update rule status
+	// default 4
+	UpdateRuleStatusWorkers int32 `json:"UpdateRuleStatusWorkers,omitempty"`
+	// ServiceAccountTokenWorkers indicates the load of service account token
+	// default 4
+	ServiceAccountTokenWorkers int32 `json:"ServiceAccountTokenWorkers,omitempty"`
 }
 
 // DeviceController indicates the device controller
@@ -316,9 +347,7 @@ type DeviceController struct {
 	// Enable indicates whether deviceController is enabled,
 	// if set to false (for debugging etc.), skip checking other deviceController configs.
 	// default true
-	Enable bool `json:"enable,omitempty"`
-	// Context indicates send,receive,response modules for deviceController module
-	Context *ControllerContext `json:"context,omitempty"`
+	Enable bool `json:"enable"`
 	// Buffer indicates Device controller buffer
 	Buffer *DeviceControllerBuffer `json:"buffer,omitempty"`
 	// Load indicates DeviceController Load
@@ -345,12 +374,41 @@ type DeviceControllerLoad struct {
 	UpdateDeviceStatusWorkers int32 `json:"updateDeviceStatusWorkers,omitempty"`
 }
 
+// NodeUpgradeJobController indicates the operations controller
+type NodeUpgradeJobController struct {
+	// Enable indicates whether NodeUpgradeJobController is enabled,
+	// if set to false (for debugging etc.), skip checking other NodeUpgradeJobController configs.
+	// default false
+	Enable bool `json:"enable"`
+	// Buffer indicates Operation Controller buffer
+	Buffer *NodeUpgradeJobControllerBuffer `json:"buffer,omitempty"`
+	// Load indicates Operation Controller Load
+	Load *NodeUpgradeJobControllerLoad `json:"load,omitempty"`
+}
+
+// NodeUpgradeJobControllerBuffer indicates NodeUpgradeJobController buffer
+type NodeUpgradeJobControllerBuffer struct {
+	// UpdateNodeUpgradeJobStatus indicates the buffer of update NodeUpgradeJob status
+	// default 1024
+	UpdateNodeUpgradeJobStatus int32 `json:"updateNodeUpgradeJobStatus,omitempty"`
+	// NodeUpgradeJobEvent indicates the buffer of NodeUpgradeJob event
+	// default 1
+	NodeUpgradeJobEvent int32 `json:"nodeUpgradeJobEvent,omitempty"`
+}
+
+// NodeUpgradeJobControllerLoad indicates the NodeUpgradeJobController load
+type NodeUpgradeJobControllerLoad struct {
+	// NodeUpgradeJobWorkers indicates the load of update NodeUpgradeJob workers
+	// default 1
+	NodeUpgradeJobWorkers int32 `json:"nodeUpgradeJobWorkers,omitempty"`
+}
+
 // SyncController indicates the sync controller
 type SyncController struct {
 	// Enable indicates whether syncController is enabled,
 	// if set to false (for debugging etc.), skip checking other syncController configs.
 	// default true
-	Enable bool `json:"enable,omitempty"`
+	Enable bool `json:"enable"`
 }
 
 // DynamicController indicates the dynamic controller
@@ -358,7 +416,7 @@ type DynamicController struct {
 	// Enable indicates whether dynamicController is enabled,
 	// if set to false (for debugging etc.), skip checking other dynamicController configs.
 	// default true
-	Enable bool `json:"enable,omitempty"`
+	Enable bool `json:"enable"`
 }
 
 // CloudSream indicates the stream controller
@@ -396,8 +454,21 @@ type CloudStream struct {
 
 type Router struct {
 	// default true
-	Enable      bool   `json:"enable,omitempty"`
+	Enable      bool   `json:"enable"`
 	Address     string `json:"address,omitempty"`
 	Port        uint32 `json:"port,omitempty"`
 	RestTimeout uint32 `json:"restTimeout,omitempty"`
+}
+
+// IptablesManager indicates the config of Iptables
+type IptablesManager struct {
+	// Enable indicates whether enable IptablesManager
+	// default true
+	Enable bool `json:"enable"`
+	// It indicates how the component is deployed, valid mode can use "internal" or "external".
+	// The iptables manager component with the internal mode is always deployed inside the cloudcore, will share the host network, forward to the internal port of the tunnel port.
+	// The iptables manager component with the external mode is always deployed outside the cloudcore, will share the host network, forward to the internal cloudcore service and port.
+	// default internal.
+	// +kubebuilder:validation:Enum=internal;external
+	Mode IptablesMgrMode `json:"mode,omitempty"`
 }

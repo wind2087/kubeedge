@@ -3,46 +3,48 @@ package admissioncontroller
 import (
 	"fmt"
 	"net/http"
-	"strings"
 
-	admissionv1beta1 "k8s.io/api/admission/v1beta1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	admissionv1 "k8s.io/api/admission/v1"
 	"k8s.io/klog/v2"
 
-	rulesv1 "github.com/kubeedge/kubeedge/cloud/pkg/apis/rules/v1"
+	rulesv1 "github.com/kubeedge/kubeedge/pkg/apis/rules/v1"
 )
 
-func admitRule(review admissionv1beta1.AdmissionReview) *admissionv1beta1.AdmissionResponse {
-	reviewResponse := admissionv1beta1.AdmissionResponse{}
-	var msg string
+var (
+	sourceToTarget = [][2]rulesv1.RuleEndpointTypeDef{
+		{rulesv1.RuleEndpointTypeRest, rulesv1.RuleEndpointTypeEventBus},
+		{rulesv1.RuleEndpointTypeRest, rulesv1.RuleEndpointTypeServiceBus},
+		{rulesv1.RuleEndpointTypeEventBus, rulesv1.RuleEndpointTypeRest},
+	}
+)
+
+func admitRule(review admissionv1.AdmissionReview) *admissionv1.AdmissionResponse {
+	reviewResponse := admissionv1.AdmissionResponse{}
+
 	switch review.Request.Operation {
-	case admissionv1beta1.Create:
+	case admissionv1.Create:
 		raw := review.Request.Object.Raw
 		rule := rulesv1.Rule{}
 		deserializer := codecs.UniversalDeserializer()
 		if _, _, err := deserializer.Decode(raw, nil, &rule); err != nil {
 			klog.Errorf("validation failed with error: %v", err)
-			msg = err.Error()
-			break
+			return toAdmissionResponse(err)
 		}
 		err := validateRule(&rule)
 		if err != nil {
-			msg = err.Error()
-			break
+			return toAdmissionResponse(err)
 		}
 		reviewResponse.Allowed = true
-	case admissionv1beta1.Delete, admissionv1beta1.Connect:
+		return &reviewResponse
+	case admissionv1.Delete, admissionv1.Connect:
 		//no rule defined for above operations, greenlight for all of above.
 		reviewResponse.Allowed = true
-		klog.Info("admission validation passed!")
+		return &reviewResponse
 	default:
-		klog.Infof("Unsupported webhook operation %v", review.Request.Operation)
-		msg = msg + "Unsupported webhook operation!"
+		err := fmt.Errorf("unsupported webhook operation %v", review.Request.Operation)
+		klog.Errorf("Unsupported webhook operation %v", review.Request.Operation)
+		return toAdmissionResponse(err)
 	}
-	if !reviewResponse.Allowed {
-		reviewResponse.Result = &metav1.Status{Message: strings.TrimSpace(msg)}
-	}
-	return &reviewResponse
 }
 
 func validateRule(rule *rulesv1.Rule) error {
@@ -63,18 +65,25 @@ func validateRule(rule *rulesv1.Rule) error {
 	} else if targetEndpoint == nil {
 		return fmt.Errorf("target ruleEndpoint %s has not been created", targetKey)
 	}
-	// TODO: check rule endpoint type whether is cloud or edge
-	if targetEndpoint.Spec.RuleEndpointType == sourceEndpoint.Spec.RuleEndpointType {
-		return fmt.Errorf("target ruleEndpoint type %s can not be the same with source ruleEndpoint type", targetEndpoint.Spec.RuleEndpointType)
-	}
 	if err = validateTargetRuleEndpoint(targetEndpoint, rule.Spec.TargetResource); err != nil {
 		return err
+	}
+	var exist bool
+	for _, s2t := range sourceToTarget {
+		if s2t[0] == sourceEndpoint.Spec.RuleEndpointType && s2t[1] == targetEndpoint.Spec.RuleEndpointType {
+			exist = true
+			break
+		}
+	}
+	if !exist {
+		return fmt.Errorf("the rule which is from source ruleEndpoint type %s to target ruleEndpoint type %s is not validate ",
+			sourceEndpoint.Spec.RuleEndpointType, targetEndpoint.Spec.RuleEndpointType)
 	}
 	return nil
 }
 func validateSourceRuleEndpoint(ruleEndpoint *rulesv1.RuleEndpoint, sourceResource map[string]string) error {
 	switch ruleEndpoint.Spec.RuleEndpointType {
-	case "rest":
+	case rulesv1.RuleEndpointTypeRest:
 		_, exist := sourceResource["path"]
 		if !exist {
 			return fmt.Errorf("\"path\" property missed in sourceResource when ruleEndpoint is \"rest\"")
@@ -88,14 +97,14 @@ func validateSourceRuleEndpoint(ruleEndpoint *rulesv1.RuleEndpoint, sourceResour
 				return fmt.Errorf("source properties exist in Rule %s/%s. Path: %s", r.Namespace, r.Name, sourceResource["path"])
 			}
 		}
-	case "eventbus":
+	case rulesv1.RuleEndpointTypeEventBus:
 		_, exist := sourceResource["topic"]
 		if !exist {
 			return fmt.Errorf("\"topic\" property missed in sourceResource when ruleEndpoint is \"eventbus\"")
 		}
 		_, exist = sourceResource["node_name"]
 		if !exist {
-			return fmt.Errorf("eventbus")
+			return fmt.Errorf("\"node_name\" property missed in sourceResource when ruleEndpoint is \"eventbus\"")
 		}
 		rules, err := controller.listRule(ruleEndpoint.Namespace)
 		if err != nil {
@@ -112,15 +121,20 @@ func validateSourceRuleEndpoint(ruleEndpoint *rulesv1.RuleEndpoint, sourceResour
 
 func validateTargetRuleEndpoint(ruleEndpoint *rulesv1.RuleEndpoint, targetResource map[string]string) error {
 	switch ruleEndpoint.Spec.RuleEndpointType {
-	case "rest":
+	case rulesv1.RuleEndpointTypeRest:
 		_, exist := targetResource["resource"]
 		if !exist {
 			return fmt.Errorf("\"resource\" property missed in targetResource when ruleEndpoint is \"rest\"")
 		}
-	case "eventbus":
+	case rulesv1.RuleEndpointTypeEventBus:
 		_, exist := targetResource["topic"]
 		if !exist {
 			return fmt.Errorf("\"topic\" property missed in targetResource when ruleEndpoint is \"eventbus\"")
+		}
+	case rulesv1.RuleEndpointTypeServiceBus:
+		_, exist := targetResource["path"]
+		if !exist {
+			return fmt.Errorf("\"path\" property missed in targetResource when ruleEndpoint is \"servicebus\"")
 		}
 	}
 	return nil

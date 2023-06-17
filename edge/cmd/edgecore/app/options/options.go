@@ -24,7 +24,7 @@ import (
 	cliflag "k8s.io/component-base/cli/flag"
 
 	"github.com/kubeedge/kubeedge/common/constants"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha1"
+	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha2"
 	"github.com/kubeedge/kubeedge/pkg/util/validation"
 )
 
@@ -32,10 +32,22 @@ type EdgeCoreOptions struct {
 	ConfigFile string
 }
 
+var edgeCoreOptions *EdgeCoreOptions
+var edgeCoreConfig *v1alpha2.EdgeCoreConfig
+
+func GetEdgeCoreOptions() *EdgeCoreOptions {
+	return edgeCoreOptions
+}
+
+func GetEdgeCoreConfig() *v1alpha2.EdgeCoreConfig {
+	return edgeCoreConfig
+}
+
 func NewEdgeCoreOptions() *EdgeCoreOptions {
-	return &EdgeCoreOptions{
+	edgeCoreOptions = &EdgeCoreOptions{
 		ConfigFile: path.Join(constants.DefaultConfigDir, "edgecore.yaml"),
 	}
+	return edgeCoreOptions
 }
 
 func (o *EdgeCoreOptions) Flags() (fss cliflag.NamedFlagSets) {
@@ -53,11 +65,11 @@ func (o *EdgeCoreOptions) Validate() []error {
 	return errs
 }
 
-func (o *EdgeCoreOptions) Config() (*v1alpha1.EdgeCoreConfig, error) {
-	cfg := v1alpha1.NewDefaultEdgeCoreConfig()
-	if err := cfg.Parse(o.ConfigFile); err != nil {
+func (o *EdgeCoreOptions) Config() (*v1alpha2.EdgeCoreConfig, error) {
+	edgeCoreConfig = v1alpha2.NewDefaultEdgeCoreConfig()
+	if err := edgeCoreConfig.Parse(o.ConfigFile); err != nil {
 		return nil, err
 	}
 
-	return cfg, nil
+	return edgeCoreConfig, nil
 }

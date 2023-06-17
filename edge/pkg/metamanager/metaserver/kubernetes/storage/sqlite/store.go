@@ -9,6 +9,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/conversion"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/apiserver/pkg/storage"
@@ -37,7 +39,8 @@ func (s *store) Create(ctx context.Context, key string, obj, out runtime.Object,
 	panic("Do not call this function")
 }
 
-func (s *store) Delete(ctx context.Context, key string, out runtime.Object, preconditions *storage.Preconditions, validateDeletion storage.ValidateObjectFunc) error {
+func (s *store) Delete(ctx context.Context, key string, out runtime.Object, preconditions *storage.Preconditions,
+	validateDeletion storage.ValidateObjectFunc, cachedExistingObject runtime.Object) error {
 	panic("Do not call this function")
 }
 
@@ -63,15 +66,11 @@ func (s *store) Get(ctx context.Context, key string, opts storage.GetOptions, ob
 		return err
 	}
 	unstrObj := objPtr.(*unstructured.Unstructured)
-	if err := runtime.DecodeInto(s.codec, []byte((*resp.Kvs)[0].Value), unstrObj); err != nil {
-		return err
-	}
-	return nil
+	return runtime.DecodeInto(s.codec, []byte((*resp.Kvs)[0].Value), unstrObj)
 }
 
-//TODO: implement it
 func (s *store) GetToList(ctx context.Context, key string, opts storage.ListOptions, listObj runtime.Object) error {
-	panic("GetToList implement me")
+	return s.List(ctx, key, opts, listObj)
 }
 
 func (s *store) List(ctx context.Context, key string, opts storage.ListOptions, listObj runtime.Object) error {
@@ -98,6 +97,21 @@ func (s *store) List(ctx context.Context, key string, opts storage.ListOptions, 
 		if err != nil {
 			return err
 		}
+
+		labelSet := labels.Set(unstrObj.GetLabels())
+		if !opts.Predicate.Label.Matches(labelSet) {
+			continue
+		}
+
+		// only support metadata.name & metadata.namespace
+		fieldSet := fields.Set{
+			"metadata.name":      unstrObj.GetName(),
+			"metadata.namespace": unstrObj.GetNamespace(),
+		}
+		if !opts.Predicate.Field.Matches(fieldSet) {
+			continue
+		}
+
 		unstrList.Items = append(unstrList.Items, unstrObj)
 	}
 	rv := strconv.FormatUint(resp.Revision, 10)
@@ -108,7 +122,7 @@ func (s *store) List(ctx context.Context, key string, opts storage.ListOptions, 
 	return nil
 }
 
-func (s *store) GuaranteedUpdate(ctx context.Context, key string, ptrToType runtime.Object, ignoreNotFound bool, precondtions *storage.Preconditions, tryUpdate storage.UpdateFunc, suggestion ...runtime.Object) error {
+func (s *store) GuaranteedUpdate(ctx context.Context, key string, ptrToType runtime.Object, ignoreNotFound bool, precondtions *storage.Preconditions, tryUpdate storage.UpdateFunc, cachedExistingObject runtime.Object) error {
 	panic("Do not call this function")
 }
 

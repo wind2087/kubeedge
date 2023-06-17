@@ -17,17 +17,16 @@ limitations under the License.
 package manager
 
 import (
-	"io/ioutil"
 	"os"
 	"reflect"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/client"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/informers"
-	"github.com/kubeedge/kubeedge/cloud/pkg/edgecontroller/config"
 	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/cloudcore/v1alpha1"
 )
 
@@ -67,16 +66,18 @@ func TestNewConfigMapManager(t *testing.T) {
 		informer cache.SharedIndexInformer
 	}
 
-	config.Config.Buffer = &v1alpha1.EdgeControllerBuffer{
-		ConfigMapEvent: 1024,
+	config := &v1alpha1.EdgeController{
+		Buffer: &v1alpha1.EdgeControllerBuffer{
+			ConfigMapEvent: 1024,
+		},
 	}
 
-	tmpfile, err := ioutil.TempFile("", "kubeconfig")
+	tmpfile, err := os.CreateTemp("", "kubeconfig")
 	if err != nil {
 		t.Error(err)
 	}
 	defer os.Remove(tmpfile.Name())
-	if err := ioutil.WriteFile(tmpfile.Name(), []byte(mockKubeConfigContent), 0666); err != nil {
+	if err := os.WriteFile(tmpfile.Name(), []byte(mockKubeConfigContent), 0666); err != nil {
 		t.Error(err)
 	}
 	client.InitKubeEdgeClient(&v1alpha1.KubeAPIConfig{
@@ -86,6 +87,8 @@ func TestNewConfigMapManager(t *testing.T) {
 		ContentType: "application/vnd.kubernetes.protobuf",
 	})
 
+	client.DefaultGetRestMapper = func() (mapper meta.RESTMapper, err error) { return nil, nil }
+
 	tests := []struct {
 		name string
 		args args
@@ -93,13 +96,13 @@ func TestNewConfigMapManager(t *testing.T) {
 		{
 			"TestNewConfigMapManager(): Case 1",
 			args{
-				informers.GetInformersManager().GetK8sInformerFactory().Core().V1().ConfigMaps().Informer(),
+				informers.GetInformersManager().GetKubeInformerFactory().Core().V1().ConfigMaps().Informer(),
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			NewConfigMapManager(tt.args.informer)
+			NewConfigMapManager(config, tt.args.informer)
 		})
 	}
 }

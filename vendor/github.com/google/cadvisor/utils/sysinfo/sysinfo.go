@@ -332,20 +332,34 @@ func addCacheInfo(sysFs sysfs.SysFs, node *info.Node) error {
 
 		for _, cache := range caches {
 			c := info.Cache{
+				Id:    cache.Id,
 				Size:  cache.Size,
 				Level: cache.Level,
 				Type:  cache.Type,
 			}
-			if cache.Cpus == numThreadsPerNode && cache.Level > cacheLevel2 {
-				// Add a node-level cache.
-				cacheFound := false
-				for _, nodeCache := range node.Caches {
-					if nodeCache == c {
-						cacheFound = true
+			if cache.Level > cacheLevel2 {
+				if cache.Cpus == numThreadsPerNode {
+					// Add a node level cache.
+					cacheFound := false
+					for _, nodeCache := range node.Caches {
+						if nodeCache == c {
+							cacheFound = true
+						}
 					}
-				}
-				if !cacheFound {
-					node.Caches = append(node.Caches, c)
+					if !cacheFound {
+						node.Caches = append(node.Caches, c)
+					}
+				} else {
+					// Add uncore cache, for architecture in which l3 cache only shared among some cores.
+					uncoreCacheFound := false
+					for _, uncoreCache := range node.Cores[coreID].UncoreCaches {
+						if uncoreCache == c {
+							uncoreCacheFound = true
+						}
+					}
+					if !uncoreCacheFound {
+						node.Cores[coreID].UncoreCaches = append(node.Cores[coreID].UncoreCaches, c)
+					}
 				}
 			} else if cache.Cpus == numThreadsPerCore {
 				// Add core level cache
@@ -377,7 +391,7 @@ func getNodeMemInfo(sysFs sysfs.SysFs, nodeDir string) (uint64, error) {
 	return uint64(memory), nil
 }
 
-// getCoresInfo retruns infromation about physical cores
+// getCoresInfo returns information about physical cores
 func getCoresInfo(sysFs sysfs.SysFs, cpuDirs []string) ([]info.Core, error) {
 	cores := make([]info.Core, 0, len(cpuDirs))
 	for _, cpuDir := range cpuDirs {
@@ -524,4 +538,15 @@ func GetSocketFromCPU(topology []info.Node, cpu int) int {
 		}
 	}
 	return -1
+}
+
+// GetOnlineCPUs returns available cores.
+func GetOnlineCPUs(topology []info.Node) []int {
+	onlineCPUs := make([]int, 0)
+	for _, node := range topology {
+		for _, core := range node.Cores {
+			onlineCPUs = append(onlineCPUs, core.Threads...)
+		}
+	}
+	return onlineCPUs
 }

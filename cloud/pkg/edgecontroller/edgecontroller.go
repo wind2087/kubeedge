@@ -6,39 +6,39 @@ import (
 	"github.com/kubeedge/beehive/pkg/core"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/informers"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
-	"github.com/kubeedge/kubeedge/cloud/pkg/edgecontroller/config"
 	"github.com/kubeedge/kubeedge/cloud/pkg/edgecontroller/controller"
 	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/cloudcore/v1alpha1"
 )
 
 // EdgeController use beehive context message layer
 type EdgeController struct {
-	enable     bool
+	config     v1alpha1.EdgeController
 	upstream   *controller.UpstreamController
 	downstream *controller.DownstreamController
 }
 
-func newEdgeController(enable bool) *EdgeController {
-	ec := &EdgeController{enable: enable}
-	if !enable {
+var _ core.Module = (*EdgeController)(nil)
+
+func newEdgeController(config *v1alpha1.EdgeController) *EdgeController {
+	ec := &EdgeController{config: *config}
+	if !ec.Enable() {
 		return ec
 	}
 	var err error
-	ec.upstream, err = controller.NewUpstreamController(informers.GetInformersManager().GetK8sInformerFactory())
+	ec.upstream, err = controller.NewUpstreamController(config, informers.GetInformersManager().GetKubeInformerFactory())
 	if err != nil {
-		klog.Fatalf("new upstream controller failed with error: %s", err)
+		klog.Exitf("new upstream controller failed with error: %s", err)
 	}
-	ec.downstream, err = controller.NewDownstreamController(informers.GetInformersManager().GetK8sInformerFactory(), informers.GetInformersManager(), informers.GetInformersManager().GetCRDInformerFactory())
+
+	ec.downstream, err = controller.NewDownstreamController(config, informers.GetInformersManager().GetKubeInformerFactory(), informers.GetInformersManager(), informers.GetInformersManager().GetKubeEdgeInformerFactory())
 	if err != nil {
-		klog.Fatalf("new downstream controller failed with error: %s", err)
+		klog.Exitf("new downstream controller failed with error: %s", err)
 	}
 	return ec
 }
 
 func Register(ec *v1alpha1.EdgeController) {
-	// TODO move module config into EdgeController struct @kadisi
-	config.InitConfigure(ec)
-	core.Register(newEdgeController(ec.Enable))
+	core.Register(newEdgeController(ec))
 }
 
 // Name of controller
@@ -53,16 +53,16 @@ func (ec *EdgeController) Group() string {
 
 // Enable indicates whether enable this module
 func (ec *EdgeController) Enable() bool {
-	return ec.enable
+	return ec.config.Enable
 }
 
 // Start controller
 func (ec *EdgeController) Start() {
 	if err := ec.upstream.Start(); err != nil {
-		klog.Fatalf("start upstream failed with error: %s", err)
+		klog.Exitf("start upstream failed with error: %s", err)
 	}
 
 	if err := ec.downstream.Start(); err != nil {
-		klog.Fatalf("start downstream failed with error: %s", err)
+		klog.Exitf("start downstream failed with error: %s", err)
 	}
 }

@@ -23,7 +23,7 @@ func (o *PacmanOS) SetKubeEdgeVersion(version semver.Version) {
 
 // InstallMQTT checks if MQTT is already installed and running, if not then install it from OS repo
 func (o *PacmanOS) InstallMQTT() error {
-	cmd := NewCommand("ps aux |awk '/mosquitto/ {print $1}' | awk '/mosquit/ {print}'")
+	cmd := NewCommand("ps aux |awk '/mosquitto/ {print $11}' | awk '/mosquit/ {print}'")
 	if err := cmd.Exec(); err != nil {
 		return err
 	}
@@ -54,43 +54,21 @@ func (o *PacmanOS) IsK8SComponentInstalled(kubeConfig, master string) error {
 // Untar's in the specified location /etc/kubeedge/ and then copies
 // the binary to excecutables' path (eg: /usr/local/bin)
 func (o *PacmanOS) InstallKubeEdge(options types.InstallOptions) error {
-	arch := "amd64"
-	cmd := NewCommand("uname -m")
-	if err := cmd.Exec(); err != nil {
-		return err
-	}
-	result := cmd.GetStdOut()
-	switch result {
-	case "armv7l":
-		arch = OSArchARM32
-	case "aarch64":
-		arch = OSArchARM64
-	case "x86_64":
-		arch = OSArchAMD64
-	default:
-		return fmt.Errorf("can't support this architecture of PacmanOS: %s", result)
-	}
-
-	return installKubeEdge(options, arch, o.KubeEdgeVersion)
+	return installKubeEdge(options, o.KubeEdgeVersion)
 }
 
 // RunEdgeCore sets the environment variable GOARCHAIUS_CONFIG_PATH for the configuration path
 // and the starts edgecore with logs being captured
 func (o *PacmanOS) RunEdgeCore() error {
-	return runEdgeCore(o.KubeEdgeVersion)
+	return runEdgeCore()
 }
 
 // KillKubeEdgeBinary will search for KubeEdge process and forcefully kill it
 func (o *PacmanOS) KillKubeEdgeBinary(proc string) error {
-	return killKubeEdgeBinary(proc)
+	return KillKubeEdgeBinary(proc)
 }
 
 // IsKubeEdgeProcessRunning checks if the given process is running or not
 func (o *PacmanOS) IsKubeEdgeProcessRunning(proc string) (bool, error) {
-	return isKubeEdgeProcessRunning(proc)
-}
-
-// IsKubeEdgeProcessRunning checks if the given process is running or not
-func (o *PacmanOS) IsProcessRunning(proc string) (bool, error) {
-	return isKubeEdgeProcessRunning(proc)
+	return IsKubeEdgeProcessRunning(proc)
 }

@@ -1,39 +1,35 @@
 package metamanager
 
 import (
-	"time"
-
 	"github.com/astaxie/beego/orm"
 	"k8s.io/klog/v2"
 
 	"github.com/kubeedge/beehive/pkg/core"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
-	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
 	metamanagerconfig "github.com/kubeedge/kubeedge/edge/pkg/metamanager/config"
 	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/dao"
-	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/dao/v2"
+	v2 "github.com/kubeedge/kubeedge/edge/pkg/metamanager/dao/v2"
 	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/metaserver"
 	metaserverconfig "github.com/kubeedge/kubeedge/edge/pkg/metamanager/metaserver/config"
 	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/metaserver/kubernetes/storage/sqlite/imitator"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha1"
-)
-
-//constant metamanager module name
-const (
-	MetaManagerModuleName = "metaManager"
+	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha2"
 )
 
 type metaManager struct {
 	enable bool
 }
 
+var _ core.Module = (*metaManager)(nil)
+
 func newMetaManager(enable bool) *metaManager {
-	return &metaManager{enable: enable}
+	return &metaManager{
+		enable: enable,
+	}
 }
 
 // Register register metamanager
-func Register(metaManager *v1alpha1.MetaManager) {
+func Register(metaManager *v1alpha2.MetaManager) {
 	metamanagerconfig.InitConfigure(metaManager)
 	meta := newMetaManager(metaManager.Enable)
 	initDBTable(meta)
@@ -52,7 +48,7 @@ func initDBTable(module core.Module) {
 }
 
 func (*metaManager) Name() string {
-	return MetaManagerModuleName
+	return modules.MetaManagerModuleName
 }
 
 func (*metaManager) Group() string {
@@ -68,25 +64,6 @@ func (m *metaManager) Start() {
 		imitator.StorageInit()
 		go metaserver.NewMetaServer().Start(beehiveContext.Done())
 	}
-	go func() {
-		period := getSyncInterval()
-		timer := time.NewTimer(period)
-		for {
-			select {
-			case <-beehiveContext.Done():
-				klog.Warning("MetaManager stop")
-				return
-			case <-timer.C:
-				timer.Reset(period)
-				msg := model.NewMessage("").BuildRouter(MetaManagerModuleName, GroupResource, model.ResourceTypePodStatus, OperationMetaSync)
-				beehiveContext.Send(MetaManagerModuleName, *msg)
-			}
-		}
-	}()
 
 	m.runMetaManager()
-}
-
-func getSyncInterval() time.Duration {
-	return time.Duration(metamanagerconfig.Config.PodStatusSyncInterval) * time.Second
 }

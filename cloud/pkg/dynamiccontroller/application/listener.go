@@ -1,7 +1,8 @@
 package application
 
 import (
-	"github.com/google/uuid"
+	"strings"
+
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -9,59 +10,65 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/kubeedge/beehive/pkg/core/model"
+	"github.com/kubeedge/kubeedge/cloud/pkg/common/messagelayer"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
-	"github.com/kubeedge/kubeedge/cloud/pkg/dynamiccontroller/messagelayer"
+	"github.com/kubeedge/kubeedge/cloud/pkg/dynamiccontroller/filter"
 	"github.com/kubeedge/kubeedge/cloud/pkg/edgecontroller/constants"
 	v2 "github.com/kubeedge/kubeedge/edge/pkg/metamanager/dao/v2"
+	"github.com/kubeedge/kubeedge/pkg/metaserver/util"
 )
 
 type SelectorListener struct {
 	id       string
 	nodeName string
 	gvr      schema.GroupVersionResource
-	// e.g. lables and fields(metadata.namespace metadata.name spec.nodename)
+	// e.g. labels and fields(metadata.namespace metadata.name spec.nodename)
 	selector LabelFieldSelector
 }
 
-func NewSelectorListener(nodeName string, gvr schema.GroupVersionResource, selector LabelFieldSelector) *SelectorListener {
-	return &SelectorListener{id: uuid.New().String(), nodeName: nodeName, gvr: gvr, selector: selector}
+func NewSelectorListener(ID, nodeName string, gvr schema.GroupVersionResource, selector LabelFieldSelector) *SelectorListener {
+	return &SelectorListener{id: ID, nodeName: nodeName, gvr: gvr, selector: selector}
 }
 
-func (l *SelectorListener) sendAllObjects(rets []runtime.Object, messageLayer messagelayer.MessageLayer) {
+func (l *SelectorListener) sendAllObjects(rets []runtime.Object, handler *CommonResourceEventHandler) {
 	for _, ret := range rets {
 		event := watch.Event{
 			Type:   watch.Added,
 			Object: ret,
 		}
-		l.sendObj(event, messageLayer)
+		l.sendObj(event, handler.messageLayer)
 	}
 }
 
 func (l *SelectorListener) sendObj(event watch.Event, messageLayer messagelayer.MessageLayer) {
-	accessor, _ := meta.Accessor(event.Object)
-	klog.V(4).Infof("[dynamiccontroller/selectorListener] listener(%v) is sending obj %v", *l, accessor.GetName())
-	// do not send obj if obj does not match listener's selector
-	if !l.selector.MatchObj(event.Object) {
-		return
-	}
-
 	accessor, err := meta.Accessor(event.Object)
 	if err != nil {
 		klog.Error(err)
 		return
 	}
+	klog.V(4).Infof("[dynamiccontroller/selectorListener] listener(%v) is sending obj %v", *l, accessor.GetName())
+	// do not send obj if obj does not match listener's selector
+	if !l.selector.MatchObj(event.Object) {
+		return
+	}
+	// filter message
+	filterEvent := *(event.DeepCopy())
+	filter.MessageFilter(filterEvent.Object, l.nodeName)
+
 	namespace := accessor.GetNamespace()
 	if namespace == "" {
 		namespace = v2.NullNamespace
 	}
-	resource, err := messagelayer.BuildResource(l.nodeName, namespace, l.gvr.Resource, accessor.GetName())
+	kind := util.UnsafeResourceToKind(l.gvr.Resource)
+	resourceType := strings.ToLower(kind)
+	resource, err := messagelayer.BuildResource(l.nodeName, namespace, resourceType, accessor.GetName())
 	if err != nil {
 		klog.Warningf("built message resource failed with error: %s", err)
 		return
 	}
 
 	var operation string
-	switch event.Type {
+	switch filterEvent.Type {
 	case watch.Added:
 		operation = model.InsertOperation
 	case watch.Modified:
@@ -69,14 +76,14 @@ func (l *SelectorListener) sendObj(event watch.Event, messageLayer messagelayer.
 	case watch.Deleted:
 		operation = model.DeleteOperation
 	default:
-		klog.Warningf("event type: %s unsupported", event.Type)
+		klog.Warningf("event type: %s unsupported", filterEvent.Type)
 		return
 	}
 
 	msg := model.NewMessage("").
 		SetResourceVersion(accessor.GetResourceVersion()).
 		BuildRouter(modules.DynamicControllerModuleName, constants.GroupResource, resource, operation).
-		FillBody(event.Object)
+		FillBody(filterEvent.Object)
 
 	if err := messageLayer.Send(*msg); err != nil {
 		klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())

@@ -35,9 +35,22 @@ genCsr() {
 }
 
 genCert() {
-    local name=$1
-    openssl x509 -req -in ${certPath}/${name}.csr -CA ${caPath}/rootCA.crt -CAkey ${caPath}/rootCA.key \
-    -CAcreateserial -passin pass:kubeedge.io -out ${certPath}/${name}.crt -days 365 -sha256
+    local name=$1 IPs=(${@:2})
+    if  [ -z "$IPs" ] ;then
+        openssl x509 -req -in ${certPath}/${name}.csr -CA ${caPath}/rootCA.crt -CAkey ${caPath}/rootCA.key \
+        -CAcreateserial -passin pass:kubeedge.io -out ${certPath}/${name}.crt -days 365 -sha256
+    else
+        index=1
+        SUBJECTALTNAME="subjectAltName = IP.1:127.0.0.1"
+        for ip in ${IPs[*]}; do
+            SUBJECTALTNAME="${SUBJECTALTNAME},"
+            index=$(($index+1))
+            SUBJECTALTNAME="${SUBJECTALTNAME}IP.${index}:${ip}"
+        done
+        echo $SUBJECTALTNAME > /tmp/server-extfile.cnf
+        openssl x509 -req -in ${certPath}/${name}.csr -CA ${caPath}/rootCA.crt -CAkey ${caPath}/rootCA.key \
+        -CAcreateserial -passin pass:kubeedge.io -out ${certPath}/${name}.crt -days 365 -sha256 -extfile /tmp/server-extfile.cnf
+    fi
 }
 
 genCertAndKey() {
@@ -54,12 +67,14 @@ stream() {
     readonly STREAM_KEY_FILE=${certPath}/stream.key
     readonly STREAM_CSR_FILE=${certPath}/stream.csr
     readonly STREAM_CRT_FILE=${certPath}/stream.crt
-    readonly K8SCA_FILE=/etc/kubernetes/pki/ca.crt
-    readonly K8SCA_KEY_FILE=/etc/kubernetes/pki/ca.key
 
-    if [ -z ${CLOUDCOREIPS} ]; then
-        echo "You must set CLOUDCOREIPS Env,The environment variable is set to specify the IP addresses of all cloudcore"
-        echo "If there are more than one IP need to be separated with space."
+    readonly K8SCA_FILE=${K8SCA_FILE:-/etc/kubernetes/pki/ca.crt}
+    readonly K8SCA_KEY_FILE=${K8SCA_KEY_FILE:-/etc/kubernetes/pki/ca.key}
+
+    if [ -z "${CLOUDCOREIPS}" ] && [ -z "${CLOUDCORE_DOMAINS}" ]; then
+        echo "You must set at least one of CLOUDCOREIPS or CLOUDCORE_DOMAINS Env.These environment
+variables are set to specify the IP addresses or domains of all cloudcore, respectively."
+        echo "If there are more than one IP or domain, you need to separate them with a space within a single env."
         exit 1
     fi
 
@@ -71,7 +86,12 @@ stream() {
         SUBJECTALTNAME="${SUBJECTALTNAME}IP.${index}:${ip}"
     done
 
-    cp /etc/kubernetes/pki/ca.crt ${caPath}/streamCA.crt
+    for domain in ${CLOUDCORE_DOMAINS};do
+      SUBJECTALTNAME="${SUBJECTALTNAME},"
+      SUBJECTALTNAME="${SUBJECTALTNAME}DNS:${domain}"
+    done
+
+    cp ${K8SCA_FILE} ${caPath}/streamCA.crt
     echo $SUBJECTALTNAME > /tmp/server-extfile.cnf
 
     openssl genrsa -out ${STREAM_KEY_FILE}  2048
@@ -82,6 +102,45 @@ stream() {
     openssl x509 -req -in ${STREAM_CSR_FILE} -CA ${K8SCA_FILE} -CAkey ${K8SCA_KEY_FILE} -CAcreateserial -out ${STREAM_CRT_FILE} -days 5000 -sha256 -extfile /tmp/server-extfile.cnf
     #verify
     openssl x509 -in ${STREAM_CRT_FILE} -text -noout
+}
+
+opts(){
+  usage() { echo "Usage: $0 [-i] ip1,ip2,..."; exit; }
+  local OPTIND
+  while getopts ':i:h' opt; do
+    case $opt in
+        i) IFS=','
+           IPS=($OPTARG)
+           ;;
+        h) usage;;
+        ?) usage;;
+    esac
+  done
+  echo ${IPS[*]}
+}
+
+edgesiteServer(){
+    serverIPs="$(opts $*)"
+    if [[ $serverIPs == *"Usage:"* ]];then
+        echo $serverIPs
+        exit 1
+    fi
+    local name=edgesite-server
+    ensureFolder
+    ensureCA
+    genCsr $name
+    genCert $name $serverIPs
+    genCsr server
+    genCert server $serverIPs
+}
+
+
+edgesiteAgent(){
+    ensureFolder
+    ensureCA
+    local name=edgesite-agent
+    genCsr $name
+    genCert $name
 }
 
 buildSecret() {
@@ -107,4 +166,4 @@ $(pr -T -o 4 ${certPath}/${name}.key)
 EOF
 }
 
-$1 $2
+$@

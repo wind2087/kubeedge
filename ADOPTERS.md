@@ -8,6 +8,8 @@ KubeEdge is used by many companies. If you are using KubeEdge in your organizati
 <a href="https://kubesphere.io" border="0" target="_blank"><img alt="KubeSphere Container Platform" src="docs/adopters/kubesphere-logo.png" height="70"></a> &nbsp; &nbsp; &nbsp;
 <a href="http://xh-iot.net/" border="0" target="_blank"><img alt="XH-iot" src="docs/adopters/xh-iot.png" height="70"></a> &nbsp; &nbsp; &nbsp;
 <a href="http://www.jylink.com/" border="0" target="_blank"><img alt="jylink" src="docs/adopters/jylink.png" height="70"></a> &nbsp; &nbsp; &nbsp;<br/><br/>
+<a href="http://www.ictnj.ac.cn/" border="0" target="_blank"><img alt="ictnj" src="docs/adopters/ictnj.svg " height="70"></a>&nbsp; &nbsp; &nbsp;
+<a href="https://www.daocloud.io/" border="0" target="_blank"><img alt="daocloud" src="docs/adopters/daocloud.svg " height="70"></a>&nbsp; &nbsp; &nbsp;<br/><br/>
 
 ## Success Stories
 
@@ -15,7 +17,7 @@ KubeEdge is used by many companies. If you are using KubeEdge in your organizati
 
 #### Challenge
 
-It is an important demand for the manufactory of Raisecom Technology to ensure the industrial production safety. Traditional workers’ production safety was detected manually, which was slow and inefficient. The situation that workers did not obey the safety requirements still happened and it could be ignored sometimes, which could generate great safety risks and affect the production efficiency of the factory.
+It is an important demand for the manufactory of Raisecom Technology to ensure the industrial production safety. Traditional workers’ production safety was detected manually, which was slow and inefficient. The situation that workers did not obey the safety requirements still happened, and it could be ignored sometimes, which could generate great safety risks and affect the production efficiency of the factory.
 
 
 
@@ -64,7 +66,7 @@ Jingying Shuzhi Technology Co., Ltd worked with KubeEdge to develop the Mine Bra
 + Service instances can recover automatically and run normally even if edge nodes are disconnected from the cloud, so the system is more reliable.
 + Edge intelligence, powerful computing, and management of a massive number of edge devices makes precise audio and video recognition possible for a range of different scenarios.
 
-With a foundation based on years of accumulated experience, Jingying Shuzhi Technology Co., Ltd has developed the ability to handle many different AI scenarios and cloud-edge-device O&M, effectively ensuring reliable services and precise recognition.
+With a foundation based on years of accumulated experience, Jingying Shuzhi Technology Co., Ltd has developed the ability to handle many AI scenarios and cloud-edge-device O&M, effectively ensuring reliable services and precise recognition.
 
 ### Benefits
 With the Mine Brain solution, coal mining enterprises in Shanxi have achieved intelligent coal mining in more than 1,000 mines. AI analysis algorithms delivered from the cloud to mining sites provide real-time risk assessments with an identification rate of up to 98%. Centralized monitoring of IT infrastructure at remote sites has reduced the cost of O&M by 65%, and integrated full-stack IT devices have reduced deployment costs by 75%. The Mine Brain solution has helped the coal industry ensure safe production, and ultimately achieved intelligent upgrade for the entire industry.

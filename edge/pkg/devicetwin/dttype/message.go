@@ -11,7 +11,7 @@ type MsgSubPub struct {
 	Qos     int    `json:"qos"`
 }
 
-//DTMessage the struct of message for commutinating between cloud and edge
+//DTMessage the struct of message for communicating between cloud and edge
 type DTMessage struct {
 	Msg      *model.Message
 	Identity string
@@ -26,13 +26,4 @@ type GetDetailNode struct {
 	GroupID   string `json:"group_id,omitempty"`
 	Operation string `json:"operation,omitempty"`
 	TimeStamp int64  `json:"timestamp,omitempty"`
-}
-
-//BuildDTMessage build devicetwin message
-func BuildDTMessage(identity string, action string, actionType string, msg *model.Message) *DTMessage {
-	return &DTMessage{
-		Msg:      msg,
-		Identity: identity,
-		Action:   action,
-		Type:     actionType}
 }

@@ -19,11 +19,12 @@ package dtmanager
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 
+	"github.com/astaxie/beego/orm"
 	"github.com/golang/mock/gomock"
-	"github.com/stretchr/testify/assert"
 
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/edge/mocks/beego"
@@ -46,7 +47,9 @@ func TestGetRemoveList(t *testing.T) {
 	dArray = append(dArray, d)
 	value := getRemoveList(dtc, dArray)
 	for i := range value {
-		assert.Equal(t, "DeviceB", value[i].ID)
+		if value[i].ID != "DeviceB" {
+			t.Errorf("expected %v, but got %v", "DeviceB", value[i].ID)
+		}
 	}
 }
 
@@ -63,7 +66,9 @@ func TestGetRemoveListProperDevideID(t *testing.T) {
 	dArray = append(dArray, d)
 	value := getRemoveList(dtc, dArray)
 	for i := range value {
-		assert.Equal(t, "123", value[i].ID)
+		if value[i].ID != "123" {
+			t.Errorf("expected %v, but got %v", "123", value[i].ID)
+		}
 	}
 }
 
@@ -72,9 +77,10 @@ func TestDealMembershipDetailInvalidEmptyMessage(t *testing.T) {
 		DeviceList: &sync.Map{},
 		GroupID:    "1",
 	}
-	value, err := dealMembershipDetail(dtc, "t", "invalid")
-	assert.Error(t, err)
-	assert.Equal(t, nil, value)
+	err := dealMembershipDetail(dtc, "t", "invalid")
+	if err == nil {
+		t.Errorf("expected error, but got nil")
+	}
 }
 
 func TestDealMembershipDetailInvalidMsg(t *testing.T) {
@@ -87,10 +93,10 @@ func TestDealMembershipDetailInvalidMsg(t *testing.T) {
 		Content: "invalidmsg",
 	}
 
-	value, err := dealMembershipDetail(dtc, "t", m)
-	assert.Error(t, err)
-	assert.Equal(t, errors.New("assertion failed"), err)
-	assert.Equal(t, nil, value)
+	err := dealMembershipDetail(dtc, "t", m)
+	if !reflect.DeepEqual(err, errors.New("assertion failed")) {
+		t.Errorf("expected %v, but got %v", errors.New("assertion failed"), err)
+	}
 }
 
 func TestDealMembershipDetailInvalidContent(t *testing.T) {
@@ -104,9 +110,10 @@ func TestDealMembershipDetailInvalidContent(t *testing.T) {
 		Content: cnt,
 	}
 
-	value, err := dealMembershipDetail(dtc, "t", m)
-	assert.Error(t, err)
-	assert.Equal(t, nil, value)
+	err := dealMembershipDetail(dtc, "t", m)
+	if err == nil {
+		t.Errorf("expected error, but got nil")
+	}
 }
 
 func TestDealMembershipDetailValid(t *testing.T) {
@@ -122,9 +129,10 @@ func TestDealMembershipDetailValid(t *testing.T) {
 	var m = &model.Message{
 		Content: content,
 	}
-	value, err := dealMembershipDetail(dtc, "t", m)
-	assert.NoError(t, err)
-	assert.Equal(t, nil, value)
+	err := dealMembershipDetail(dtc, "t", m)
+	if err != nil {
+		t.Errorf("expected nil, but got error: %v", err)
+	}
 }
 
 func TestDealMembershipUpdateEmptyMessage(t *testing.T) {
@@ -132,10 +140,10 @@ func TestDealMembershipUpdateEmptyMessage(t *testing.T) {
 		DeviceList: &sync.Map{},
 		GroupID:    "1",
 	}
-	value, err := dealMembershipDetail(dtc, "t", "invalid")
-	assert.Error(t, err)
-	assert.Equal(t, errors.New("msg not Message type"), err)
-	assert.Equal(t, nil, value)
+	err := dealMembershipDetail(dtc, "t", "invalid")
+	if !reflect.DeepEqual(err, errors.New("msg not Message type")) {
+		t.Errorf("expected %v, but got %v", errors.New("msg not Message type"), err)
+	}
 }
 
 func TestDealMembershipUpdateInvalidMsg(t *testing.T) {
@@ -148,10 +156,10 @@ func TestDealMembershipUpdateInvalidMsg(t *testing.T) {
 		Content: "invalidmessage",
 	}
 
-	value, err := dealMembershipUpdate(dtc, "t", m)
-	assert.Error(t, err)
-	assert.Equal(t, errors.New("assertion failed"), err)
-	assert.Equal(t, nil, value)
+	err := dealMembershipUpdate(dtc, "t", m)
+	if !reflect.DeepEqual(err, errors.New("assertion failed")) {
+		t.Errorf("expected %v, but got %v", errors.New("assertion failed"), err)
+	}
 }
 func TestDealMembershipUpdateInvalidContent(t *testing.T) {
 	dtc := &dtcontext.DTContext{
@@ -165,9 +173,10 @@ func TestDealMembershipUpdateInvalidContent(t *testing.T) {
 		Content: cnt,
 	}
 
-	value, err := dealMembershipUpdate(dtc, "t", m)
-	assert.Error(t, err)
-	assert.Equal(t, nil, value)
+	err := dealMembershipUpdate(dtc, "t", m)
+	if err == nil {
+		t.Errorf("expected error, but got nil")
+	}
 }
 
 func TestDealMembershipUpdateValidAddedDevice(t *testing.T) {
@@ -177,6 +186,9 @@ func TestDealMembershipUpdateValidAddedDevice(t *testing.T) {
 	defer mockCtrl.Finish()
 	ormerMock = beego.NewMockOrmer(mockCtrl)
 	dbm.DBAccess = ormerMock
+	dbm.DefaultOrmFunc = func() orm.Ormer {
+		return ormerMock
+	}
 
 	ormerMock.EXPECT().Begin().Return(nil)
 	ormerMock.EXPECT().Insert(gomock.Any()).Return(int64(1), nil).Times(1)
@@ -205,9 +217,10 @@ func TestDealMembershipUpdateValidAddedDevice(t *testing.T) {
 	var m = &model.Message{
 		Content: content,
 	}
-	value, err := dealMembershipUpdate(dtc, "t", m)
-	assert.NoError(t, err)
-	assert.Equal(t, nil, value)
+	err := dealMembershipUpdate(dtc, "t", m)
+	if err != nil {
+		t.Errorf("expected nil, but got error: %v", err)
+	}
 }
 
 func TestDealMembershipUpdateValidRemovedDevice(t *testing.T) {
@@ -234,9 +247,10 @@ func TestDealMembershipUpdateValidRemovedDevice(t *testing.T) {
 	var m = &model.Message{
 		Content: content,
 	}
-	value, err := dealMembershipUpdate(dtc, "t", m)
-	assert.NoError(t, err)
-	assert.Equal(t, nil, value)
+	err := dealMembershipUpdate(dtc, "t", m)
+	if err != nil {
+		t.Errorf("expected nil, but got error: %v", err)
+	}
 }
 
 func TestDealMembershipGetEmptyMsg(t *testing.T) {
@@ -244,10 +258,10 @@ func TestDealMembershipGetEmptyMsg(t *testing.T) {
 		DeviceList: &sync.Map{},
 		GroupID:    "1",
 	}
-	value, err := dealMembershipGet(dtc, "t", "invalid")
-	assert.Error(t, err)
-	assert.Equal(t, errors.New("msg not Message type"), err)
-	assert.Equal(t, nil, value)
+	err := dealMembershipGet(dtc, "t", "invalid")
+	if !reflect.DeepEqual(err, errors.New("msg not Message type")) {
+		t.Errorf("expected %v, but got %v", errors.New("msg not Message type"), err)
+	}
 }
 
 func TestDealMembershipGetInvalidMsg(t *testing.T) {
@@ -260,10 +274,10 @@ func TestDealMembershipGetInvalidMsg(t *testing.T) {
 		Content: "hello",
 	}
 
-	value, err := dealMembershipGet(dtc, "t", m)
-	assert.Error(t, err)
-	assert.Equal(t, errors.New("assertion failed"), err)
-	assert.Equal(t, nil, value)
+	err := dealMembershipGet(dtc, "t", m)
+	if !reflect.DeepEqual(err, errors.New("assertion failed")) {
+		t.Errorf("expected %v, but got %v", errors.New("assertion failed"), err)
+	}
 }
 
 func TestDealMembershipGetValid(t *testing.T) {
@@ -290,8 +304,10 @@ func TestDealMembershipGetValid(t *testing.T) {
 	var m = &model.Message{
 		Content: content,
 	}
-	_, err := dealMembershipGet(dtc, "t", m)
-	assert.NoError(t, err)
+	err := dealMembershipGet(dtc, "t", m)
+	if !reflect.DeepEqual(err, errors.New("Not found chan to communicate")) {
+		t.Errorf("expected %v, but got error: %v", errors.New("Not found chan to communicate"), err)
+	}
 }
 
 func TestDealMembershipGetInnerValid(t *testing.T) {
@@ -317,7 +333,9 @@ func TestDealMembershipGetInnerValid(t *testing.T) {
 	content, _ := json.Marshal(payload)
 
 	err := dealMembershipGetInner(dtc, content)
-	assert.NoError(t, err)
+	if !reflect.DeepEqual(err, errors.New("Not found chan to communicate")) {
+		t.Errorf("expected %v, but got error: %v", errors.New("Not found chan to communicate"), err)
+	}
 }
 
 func TestDealMembershipGetInnerInValid(t *testing.T) {
@@ -329,7 +347,9 @@ func TestDealMembershipGetInnerInValid(t *testing.T) {
 	}
 
 	err := dealMembershipGetInner(dtc, []byte("invalid"))
-	assert.NoError(t, err)
+	if !reflect.DeepEqual(err, errors.New("Not found chan to communicate")) {
+		t.Errorf("expected %v, but got error: %v", errors.New("Not found chan to communicate"), err)
+	}
 }
 
 //Commented As we are not considering about the coverage incase for coverage we can uncomment below cases.

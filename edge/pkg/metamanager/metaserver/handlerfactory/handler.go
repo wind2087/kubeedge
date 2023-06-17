@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -21,10 +21,10 @@ import (
 	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/klog/v2"
 
-	"github.com/kubeedge/kubeedge/cloud/pkg/dynamiccontroller/application"
 	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/metaserver/kubernetes/fakers"
 	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/metaserver/kubernetes/scope"
 	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/metaserver/kubernetes/storage"
+	"github.com/kubeedge/kubeedge/pkg/metaserver"
 	"github.com/kubeedge/kubeedge/pkg/metaserver/util"
 )
 
@@ -33,9 +33,10 @@ type Factory struct {
 	scope             *handlers.RequestScope
 	MinRequestTimeout time.Duration
 	handlers          map[string]http.Handler
+	lock              sync.RWMutex
 }
 
-func NewFactory() Factory {
+func NewFactory() *Factory {
 	s, err := storage.NewREST()
 	utilruntime.Must(err)
 	f := Factory{
@@ -43,23 +44,28 @@ func NewFactory() Factory {
 		scope:             scope.NewRequestScope(),
 		MinRequestTimeout: 1800 * time.Second,
 		handlers:          make(map[string]http.Handler),
+		lock:              sync.RWMutex{},
 	}
-	return f
+	return &f
 }
 
 func (f *Factory) Get() http.Handler {
-	if h, ok := f.handlers["get"]; ok {
+	if h, ok := f.getHandler("get"); ok {
 		return h
 	}
-	h := handlers.GetResource(f.storage, f.storage, f.scope)
+	f.lock.Lock()
+	defer f.lock.Unlock()
+	h := handlers.GetResource(f.storage, f.scope)
 	f.handlers["get"] = h
 	return h
 }
 
 func (f *Factory) List() http.Handler {
-	if h, ok := f.handlers["list"]; ok {
+	if h, ok := f.getHandler("list"); ok {
 		return h
 	}
+	f.lock.Lock()
+	defer f.lock.Unlock()
 	h := handlers.ListResource(f.storage, f.storage, f.scope, false, f.MinRequestTimeout)
 	f.handlers["list"] = h
 	return h
@@ -77,12 +83,21 @@ func (f *Factory) Create(req *request.RequestInfo) http.Handler {
 }
 
 func (f *Factory) Delete() http.Handler {
-	if h, ok := f.handlers["delete"]; ok {
+	if h, ok := f.getHandler("delete"); ok {
 		return h
 	}
-	h := handlers.DeleteResource(f.storage, false, f.scope, fakers.NewAlwaysAdmit())
+	f.lock.Lock()
+	defer f.lock.Unlock()
+	h := handlers.DeleteResource(f.storage, true, f.scope, fakers.NewAlwaysAdmit())
 	f.handlers["delete"] = h
 	return h
+}
+
+func (f *Factory) getHandler(key string) (http.Handler, bool) {
+	f.lock.RLock()
+	defer f.lock.RUnlock()
+	h, ok := f.handlers[key]
+	return h, ok
 }
 
 func (f *Factory) Update(req *request.RequestInfo) http.Handler {
@@ -149,7 +164,7 @@ func (f *Factory) Patch(reqInfo *request.RequestInfo) http.Handler {
 		options.TypeMeta.SetGroupVersionKind(metav1.SchemeGroupVersion.WithKind("PatchOptions"))
 
 		reqInfo, _ := request.RequestInfoFrom(req.Context())
-		pi := application.PatchInfo{
+		pi := metaserver.PatchInfo{
 			Name:         name,
 			PatchType:    patchType,
 			Data:         patchBytes,
@@ -165,7 +180,6 @@ func (f *Factory) Patch(reqInfo *request.RequestInfo) http.Handler {
 
 		responsewriters.WriteObjectNegotiated(scope.Serializer, scope, scope.Kind.GroupVersion(), w, req, 200, retObj)
 	}
-	//handlers.PatchResource()
 	return http.HandlerFunc(h)
 }
 
@@ -192,13 +206,13 @@ func parseTimeout(str string) time.Duration {
 func limitedReadBody(req *http.Request, limit int64) ([]byte, error) {
 	defer req.Body.Close()
 	if limit <= 0 {
-		return ioutil.ReadAll(req.Body)
+		return io.ReadAll(req.Body)
 	}
 	lr := &io.LimitedReader{
 		R: req.Body,
 		N: limit + 1,
 	}
-	data, err := ioutil.ReadAll(lr)
+	data, err := io.ReadAll(lr)
 	if err != nil {
 		return nil, err
 	}

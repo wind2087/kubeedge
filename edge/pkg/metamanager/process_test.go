@@ -19,11 +19,12 @@ package metamanager
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
-	"time"
 
 	"github.com/golang/mock/gomock"
 
+	"github.com/kubeedge/beehive/pkg/common"
 	"github.com/kubeedge/beehive/pkg/core"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
@@ -33,7 +34,7 @@ import (
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
 	metaManagerConfig "github.com/kubeedge/kubeedge/edge/pkg/metamanager/config"
 	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/dao"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha1"
+	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha2"
 )
 
 const (
@@ -46,8 +47,6 @@ const (
 	ModuleNameEdgeHub = "websocket"
 	// ModuleNameController is the name of the controller module
 	ModuleNameController = "edgecontroller"
-	// MarshalErroris common jsonMarshall error
-	MarshalError = "Error to marshal message content: json: unsupported type: chan int"
 	// OperationNodeConnection is message with operation publish
 	OperationNodeConnection = "publish"
 )
@@ -56,8 +55,15 @@ const (
 var errFailedDBOperation = errors.New(FailedDBOperation)
 
 func init() {
-	cfg := v1alpha1.NewDefaultEdgeCoreConfig()
+	cfg := v1alpha2.NewDefaultEdgeCoreConfig()
 	metaManagerConfig.InitConfigure(cfg.Modules.MetaManager)
+
+	beehiveContext.InitContext([]string{common.MsgCtxTypeChannel})
+	add := &common.ModuleInfo{
+		ModuleName: modules.MetaManagerModuleName,
+		ModuleType: common.MsgCtxTypeChannel,
+	}
+	beehiveContext.AddModule(add)
 }
 
 // TestProcessInsert is function to test processInsert
@@ -68,16 +74,28 @@ func TestProcessInsert(t *testing.T) {
 	dbm.DBAccess = ormerMock
 	meta := newMetaManager(true)
 	core.Register(meta)
-	beehiveContext.InitContext(beehiveContext.MsgCtxTypeChannel)
-	beehiveContext.AddModule(meta.Name())
+
+	add := &common.ModuleInfo{
+		ModuleName: meta.Name(),
+		ModuleType: common.MsgCtxTypeChannel,
+	}
+	beehiveContext.AddModule(add)
 	beehiveContext.AddModuleGroup(meta.Name(), meta.Group())
-	beehiveContext.AddModule(ModuleNameEdgeHub)
+	edgeHub := &common.ModuleInfo{
+		ModuleName: ModuleNameEdgeHub,
+		ModuleType: common.MsgCtxTypeChannel,
+	}
+	beehiveContext.AddModule(edgeHub)
 	beehiveContext.AddModuleGroup(ModuleNameEdgeHub, modules.HubGroup)
-	beehiveContext.AddModule(ModuleNameEdged)
+	edged := &common.ModuleInfo{
+		ModuleName: ModuleNameEdged,
+		ModuleType: common.MsgCtxTypeChannel,
+	}
+	beehiveContext.AddModule(edged)
 
 	//SaveMeta Failed, feedbackError SendToCloud
 	ormerMock.EXPECT().Insert(gomock.Any()).Return(int64(1), errFailedDBOperation).Times(1)
-	msg := model.NewMessage("").BuildRouter(MetaManagerModuleName, GroupResource, model.ResourceTypePodStatus, model.InsertOperation)
+	msg := model.NewMessage("").BuildRouter(modules.MetaManagerModuleName, GroupResource, model.ResourceTypePodStatus, model.InsertOperation)
 	meta.processInsert(*msg)
 	//beehiveContext.Send(MetaManagerModuleName, *msg)
 	message, err := beehiveContext.Receive(ModuleNameEdgeHub)
@@ -113,13 +131,13 @@ func TestProcessInsert(t *testing.T) {
 	meta.processInsert(*msg)
 	message, _ = beehiveContext.Receive(ModuleNameEdged)
 	t.Run("MarshallFail", func(t *testing.T) {
-		want := MarshalError
+		want := "Error to get insert message content data: marshal message content failed: json: unsupported type: chan int"
 		if message.GetContent() != want {
 			t.Errorf("Wrong Error message received : Wanted %v and Got %v", want, message.GetContent())
 		}
 	})
 
-	//Succesful Case and 3 resources
+	//Successful Case and 3 resources
 	ormerMock.EXPECT().Insert(gomock.Any()).Return(int64(1), nil).Times(1)
 	msg = model.NewMessage("").BuildRouter(ModuleNameEdged, GroupResource, model.ResourceTypePodStatus+"/secondRes"+"/thirdRes", model.InsertOperation)
 	meta.processInsert(*msg)
@@ -144,33 +162,43 @@ func TestProcessUpdate(t *testing.T) {
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
 	ormerMock := beego.NewMockOrmer(mockCtrl)
-	rawSeterMock := beego.NewMockRawSeter(mockCtrl)
-	querySeterMock := beego.NewMockQuerySeter(mockCtrl)
+	rawSetterMock := beego.NewMockRawSeter(mockCtrl)
 	dbm.DBAccess = ormerMock
 	meta := newMetaManager(true)
 	core.Register(meta)
-	beehiveContext.InitContext(beehiveContext.MsgCtxTypeChannel)
-	beehiveContext.AddModule(meta.Name())
+
+	add := &common.ModuleInfo{
+		ModuleName: meta.Name(),
+		ModuleType: common.MsgCtxTypeChannel,
+	}
+	beehiveContext.AddModule(add)
 	beehiveContext.AddModuleGroup(meta.Name(), meta.Group())
-	beehiveContext.AddModule(ModuleNameEdgeHub)
+	edgeHub := &common.ModuleInfo{
+		ModuleName: ModuleNameEdgeHub,
+		ModuleType: common.MsgCtxTypeChannel,
+	}
+	beehiveContext.AddModule(edgeHub)
 	beehiveContext.AddModuleGroup(ModuleNameEdgeHub, modules.HubGroup)
-	beehiveContext.AddModule(EdgeFunctionModel)
-	beehiveContext.AddModule(ModuleNameEdged)
+	edged := &common.ModuleInfo{
+		ModuleName: ModuleNameEdged,
+		ModuleType: common.MsgCtxTypeChannel,
+	}
+	beehiveContext.AddModule(edged)
 
 	//jsonMarshall fail
 	msg := model.NewMessage("").BuildRouter(ModuleNameEdged, GroupResource, model.ResourceTypePodStatus, model.UpdateOperation).FillBody(make(chan int))
 	meta.processUpdate(*msg)
 	message, _ := beehiveContext.Receive(ModuleNameEdged)
 	t.Run("MarshallFail", func(t *testing.T) {
-		want := MarshalError
+		want := "Error to get update message content data: marshal message content failed: json: unsupported type: chan int"
 		if message.GetContent() != want {
 			t.Errorf("Wrong Error message received : Wanted %v and Got %v", want, message.GetContent())
 		}
 	})
 
 	//Database save error
-	rawSeterMock.EXPECT().Exec().Return(nil, errFailedDBOperation).Times(1)
-	ormerMock.EXPECT().Raw(gomock.Any(), gomock.Any()).Return(rawSeterMock).Times(1)
+	rawSetterMock.EXPECT().Exec().Return(nil, errFailedDBOperation).Times(1)
+	ormerMock.EXPECT().Raw(gomock.Any(), gomock.Any()).Return(rawSetterMock).Times(1)
 	msg = model.NewMessage("").BuildRouter(ModuleNameEdged, GroupResource, model.ResourceTypePodStatus, model.UpdateOperation)
 	meta.processUpdate(*msg)
 	message, _ = beehiveContext.Receive(ModuleNameEdged)
@@ -181,27 +209,9 @@ func TestProcessUpdate(t *testing.T) {
 		}
 	})
 
-	//resourceUnchanged true
-	fakeDao := new([]dao.Meta)
-	fakeDaoArray := make([]dao.Meta, 1)
-	fakeDaoArray[0] = dao.Meta{Key: "Test", Value: "\"test\""}
-	fakeDao = &fakeDaoArray
-	querySeterMock.EXPECT().All(gomock.Any()).SetArg(0, *fakeDao).Return(int64(1), nil).Times(1)
-	querySeterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(querySeterMock).Times(1)
-	ormerMock.EXPECT().QueryTable(gomock.Any()).Return(querySeterMock).Times(1)
-	msg = model.NewMessage("").BuildRouter(ModuleNameEdged, GroupResource, "test/"+model.ResourceTypePodStatus, model.UpdateOperation).FillBody("test")
-	meta.processUpdate(*msg)
-	message, _ = beehiveContext.Receive(ModuleNameEdged)
-	t.Run("ResourceUnchangedTrue", func(t *testing.T) {
-		want := OK
-		if message.GetContent() != want {
-			t.Errorf("Resource Unchanged Case Failed: Wanted %v and Got %v", want, message.GetContent())
-		}
-	})
-
 	//Success Case Source Edged, sync = true
-	ormerMock.EXPECT().Raw(gomock.Any(), gomock.Any()).Return(rawSeterMock).Times(1)
-	rawSeterMock.EXPECT().Exec().Return(nil, nil).Times(1)
+	ormerMock.EXPECT().Raw(gomock.Any(), gomock.Any()).Return(rawSetterMock).Times(1)
+	rawSetterMock.EXPECT().Exec().Return(nil, nil).Times(1)
 	msg = model.NewMessage("").BuildRouter(ModuleNameEdged, GroupResource, model.ResourceTypePodStatus, model.UpdateOperation)
 	meta.processUpdate(*msg)
 	edgehubMsg, _ := beehiveContext.Receive(ModuleNameEdgeHub)
@@ -219,14 +229,14 @@ func TestProcessUpdate(t *testing.T) {
 		}
 	})
 
-	//Success Case Source CloudControlerModel
-	ormerMock.EXPECT().Raw(gomock.Any(), gomock.Any()).Return(rawSeterMock).Times(1)
-	rawSeterMock.EXPECT().Exec().Return(nil, nil).Times(1)
-	msg = model.NewMessage("").BuildRouter(CloudControlerModel, GroupResource, model.ResourceTypePodStatus, model.UpdateOperation)
+	//Success Case Source CloudControllerModel
+	ormerMock.EXPECT().Raw(gomock.Any(), gomock.Any()).Return(rawSetterMock).Times(1)
+	rawSetterMock.EXPECT().Exec().Return(nil, nil).Times(1)
+	msg = model.NewMessage("").BuildRouter(CloudControllerModel, GroupResource, model.ResourceTypePodStatus, model.UpdateOperation)
 	meta.processUpdate(*msg)
 	message, _ = beehiveContext.Receive(ModuleNameEdged)
 	t.Run("SuccessSend[CloudController->Edged]", func(t *testing.T) {
-		want := CloudControlerModel
+		want := CloudControllerModel
 		if message.GetSource() != want {
 			t.Errorf("Wrong message received : Wanted from source %v and Got from source %v", want, message.GetSource())
 		}
@@ -238,33 +248,6 @@ func TestProcessUpdate(t *testing.T) {
 			t.Errorf("Wrong message received : Wanted %v and Got %v", want, message.GetContent())
 		}
 	})
-
-	//Success Case Source CloudFunctionModel
-	ormerMock.EXPECT().Raw(gomock.Any(), gomock.Any()).Return(rawSeterMock).Times(1)
-	rawSeterMock.EXPECT().Exec().Return(nil, nil).Times(1)
-	msg = model.NewMessage("").BuildRouter(CloudFunctionModel, GroupResource, model.ResourceTypePodStatus, model.UpdateOperation)
-	meta.processUpdate(*msg)
-	message, _ = beehiveContext.Receive(EdgeFunctionModel)
-	t.Run("SuccessSend[CloudFunction->EdgeFunction]", func(t *testing.T) {
-		want := CloudFunctionModel
-		if message.GetSource() != want {
-			t.Errorf("Wrong message received : Wanted from source %v and Got from source %v", want, message.GetSource())
-		}
-	})
-
-	//Success Case Source EdgeFunctionModel
-	rawSeterMock.EXPECT().Exec().Return(nil, nil).Times(1)
-	ormerMock.EXPECT().Raw(gomock.Any(), gomock.Any()).Return(rawSeterMock).Times(1)
-	//rawSeterMock.EXPECT().Exec().Return(nil, nil).Times(1)
-	msg = model.NewMessage("").BuildRouter(EdgeFunctionModel, GroupResource, model.ResourceTypePodStatus, model.UpdateOperation)
-	meta.processUpdate(*msg)
-	message, _ = beehiveContext.Receive(ModuleNameEdgeHub)
-	t.Run("SuccessSend[EdgeFunction->EdgeHub]", func(t *testing.T) {
-		want := EdgeFunctionModel
-		if message.GetSource() != want {
-			t.Errorf("Wrong message received : Wanted from source %v and Got from source %v", want, message.GetSource())
-		}
-	})
 }
 
 // TestProcessResponse is function to test processResponse
@@ -272,33 +255,44 @@ func TestProcessResponse(t *testing.T) {
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
 	ormerMock := beego.NewMockOrmer(mockCtrl)
-	rawSeterMock := beego.NewMockRawSeter(mockCtrl)
+	rawSetterMock := beego.NewMockRawSeter(mockCtrl)
 	dbm.DBAccess = ormerMock
 	meta := newMetaManager(true)
 	core.Register(meta)
-	beehiveContext.InitContext(beehiveContext.MsgCtxTypeChannel)
-	beehiveContext.AddModule(meta.Name())
+
+	add := &common.ModuleInfo{
+		ModuleName: meta.Name(),
+		ModuleType: common.MsgCtxTypeChannel,
+	}
+	beehiveContext.AddModule(add)
 	beehiveContext.AddModuleGroup(meta.Name(), meta.Group())
-	beehiveContext.AddModule(ModuleNameEdgeHub)
+	edgeHub := &common.ModuleInfo{
+		ModuleName: ModuleNameEdgeHub,
+		ModuleType: common.MsgCtxTypeChannel,
+	}
+	beehiveContext.AddModule(edgeHub)
 	beehiveContext.AddModuleGroup(ModuleNameEdgeHub, modules.HubGroup)
-	beehiveContext.AddModule(EdgeFunctionModel)
-	beehiveContext.AddModule(ModuleNameEdged)
+	addEdged := &common.ModuleInfo{
+		ModuleName: ModuleNameEdged,
+		ModuleType: common.MsgCtxTypeChannel,
+	}
+	beehiveContext.AddModule(addEdged)
 
 	//jsonMarshall fail
 	msg := model.NewMessage("").BuildRouter(ModuleNameEdged, GroupResource, model.ResourceTypePodStatus, model.ResponseOperation).FillBody(make(chan int))
-	beehiveContext.Send(MetaManagerModuleName, *msg)
+	beehiveContext.Send(modules.MetaManagerModuleName, *msg)
 	meta.processResponse(*msg)
 	message, _ := beehiveContext.Receive(ModuleNameEdged)
 	t.Run("MarshallFail", func(t *testing.T) {
-		want := MarshalError
+		want := "Error to get response message content data: marshal message content failed: json: unsupported type: chan int"
 		if message.GetContent() != want {
 			t.Errorf("Wrong Error message received : Wanted %v and Got %v", want, message.GetContent())
 		}
 	})
 
 	//Database save error
-	ormerMock.EXPECT().Raw(gomock.Any(), gomock.Any()).Return(rawSeterMock).Times(1)
-	rawSeterMock.EXPECT().Exec().Return(nil, errFailedDBOperation).Times(1)
+	ormerMock.EXPECT().Raw(gomock.Any(), gomock.Any()).Return(rawSetterMock).Times(1)
+	rawSetterMock.EXPECT().Exec().Return(nil, errFailedDBOperation).Times(1)
 	msg = model.NewMessage("").BuildRouter(ModuleNameEdged, GroupResource, model.ResourceTypePodStatus, model.ResponseOperation)
 	meta.processResponse(*msg)
 	message, _ = beehiveContext.Receive(ModuleNameEdged)
@@ -310,8 +304,8 @@ func TestProcessResponse(t *testing.T) {
 	})
 
 	//Success Case Source EdgeD
-	ormerMock.EXPECT().Raw(gomock.Any(), gomock.Any()).Return(rawSeterMock).Times(1)
-	rawSeterMock.EXPECT().Exec().Return(nil, nil).Times(1)
+	ormerMock.EXPECT().Raw(gomock.Any(), gomock.Any()).Return(rawSetterMock).Times(1)
+	rawSetterMock.EXPECT().Exec().Return(nil, nil).Times(1)
 	msg = model.NewMessage("").BuildRouter(ModuleNameEdged, GroupResource, model.ResourceTypePodStatus, model.ResponseOperation)
 	meta.processResponse(*msg)
 	message, _ = beehiveContext.Receive(ModuleNameEdgeHub)
@@ -323,8 +317,8 @@ func TestProcessResponse(t *testing.T) {
 	})
 
 	//Success Case Source EdgeHub
-	ormerMock.EXPECT().Raw(gomock.Any(), gomock.Any()).Return(rawSeterMock).Times(1)
-	rawSeterMock.EXPECT().Exec().Return(nil, nil).Times(1)
+	ormerMock.EXPECT().Raw(gomock.Any(), gomock.Any()).Return(rawSetterMock).Times(1)
+	rawSetterMock.EXPECT().Exec().Return(nil, nil).Times(1)
 	msg = model.NewMessage("").BuildRouter(ModuleNameController, GroupResource, model.ResourceTypePodStatus, model.ResponseOperation)
 	meta.processResponse(*msg)
 	message, _ = beehiveContext.Receive(ModuleNameEdged)
@@ -341,21 +335,33 @@ func TestProcessDelete(t *testing.T) {
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
 	ormerMock := beego.NewMockOrmer(mockCtrl)
-	querySeterMock := beego.NewMockQuerySeter(mockCtrl)
+	querySetterMock := beego.NewMockQuerySeter(mockCtrl)
 	dbm.DBAccess = ormerMock
 	meta := newMetaManager(true)
 	core.Register(meta)
-	beehiveContext.InitContext(beehiveContext.MsgCtxTypeChannel)
-	beehiveContext.AddModule(meta.Name())
+
+	add := &common.ModuleInfo{
+		ModuleName: meta.Name(),
+		ModuleType: common.MsgCtxTypeChannel,
+	}
+	beehiveContext.AddModule(add)
 	beehiveContext.AddModuleGroup(meta.Name(), meta.Group())
-	beehiveContext.AddModule(ModuleNameEdgeHub)
+	edgeHub := &common.ModuleInfo{
+		ModuleName: ModuleNameEdgeHub,
+		ModuleType: common.MsgCtxTypeChannel,
+	}
+	beehiveContext.AddModule(edgeHub)
 	beehiveContext.AddModuleGroup(ModuleNameEdgeHub, modules.HubGroup)
-	beehiveContext.AddModule(ModuleNameEdged)
+	edged := &common.ModuleInfo{
+		ModuleName: ModuleNameEdged,
+		ModuleType: common.MsgCtxTypeChannel,
+	}
+	beehiveContext.AddModule(edged)
 
 	//Database Save Error
-	querySeterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(querySeterMock).Times(1)
-	querySeterMock.EXPECT().Delete().Return(int64(1), errFailedDBOperation).Times(1)
-	ormerMock.EXPECT().QueryTable(gomock.Any()).Return(querySeterMock).Times(1)
+	querySetterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(querySetterMock).Times(1)
+	querySetterMock.EXPECT().Delete().Return(int64(1), errFailedDBOperation).Times(1)
+	ormerMock.EXPECT().QueryTable(gomock.Any()).Return(querySetterMock).Times(1)
 	msg := model.NewMessage("").BuildRouter(ModuleNameEdgeHub, GroupResource, model.ResourceTypePodStatus, model.DeleteOperation)
 	meta.processDelete(*msg)
 	message, _ := beehiveContext.Receive(ModuleNameEdgeHub)
@@ -367,9 +373,9 @@ func TestProcessDelete(t *testing.T) {
 	})
 
 	//Success Case
-	querySeterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(querySeterMock).Times(1)
-	querySeterMock.EXPECT().Delete().Return(int64(1), nil).Times(1)
-	ormerMock.EXPECT().QueryTable(gomock.Any()).Return(querySeterMock).Times(1)
+	querySetterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(querySetterMock).Times(1)
+	querySetterMock.EXPECT().Delete().Return(int64(1), nil).Times(1)
+	ormerMock.EXPECT().QueryTable(gomock.Any()).Return(querySetterMock).Times(1)
 	msg = model.NewMessage("").BuildRouter(ModuleNameEdgeHub, GroupResource, model.ResourceTypePodStatus, model.DeleteOperation)
 	meta.processDelete(*msg)
 	message, _ = beehiveContext.Receive(ModuleNameEdged)
@@ -386,6 +392,18 @@ func TestProcessDelete(t *testing.T) {
 			t.Errorf("Wrong message received : Wanted %v and Got %v", want, message.GetContent())
 		}
 	})
+
+	// Success Case
+	resource := fmt.Sprintf("test/%s/nginx", model.ResourceTypePod)
+	msg = model.NewMessage("").BuildRouter(ModuleNameEdged, modules.MetaGroup, resource, model.DeleteOperation)
+	meta.processDelete(*msg)
+	message, _ = beehiveContext.Receive(ModuleNameEdgeHub)
+	t.Run("SuccessSourceEdged", func(t *testing.T) {
+		want := ModuleNameEdged
+		if message.GetSource() != want {
+			t.Errorf("Wrong message received : Wanted from source %v and Got from source %v", want, message.GetSource())
+		}
+	})
 }
 
 // TestProcessQuery is function to test processQuery
@@ -393,52 +411,77 @@ func TestProcessQuery(t *testing.T) {
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
 	ormerMock := beego.NewMockOrmer(mockCtrl)
-	querySeterMock := beego.NewMockQuerySeter(mockCtrl)
-	rawSeterMock := beego.NewMockRawSeter(mockCtrl)
+	querySetterMock := beego.NewMockQuerySeter(mockCtrl)
+	rawSetterMock := beego.NewMockRawSeter(mockCtrl)
 	dbm.DBAccess = ormerMock
 	meta := newMetaManager(true)
 	core.Register(meta)
-	beehiveContext.InitContext(beehiveContext.MsgCtxTypeChannel)
-	beehiveContext.AddModule(meta.Name())
-	beehiveContext.AddModuleGroup(meta.Name(), meta.Group())
-	beehiveContext.AddModule(ModuleNameEdgeHub)
-	beehiveContext.AddModuleGroup(ModuleNameEdgeHub, modules.HubGroup)
-	beehiveContext.AddModule(ModuleNameEdged)
 
-	//process remote query sync error case
-	msg := model.NewMessage("").BuildRouter(ModuleNameEdged, GroupResource, model.ResourceTypePodStatus, OperationNodeConnection).FillBody(connect.CloudConnected)
-	meta.processNodeConnection(*msg)
-	//wait for message to be received by metaManager and get processed
-	time.Sleep(1 * time.Second)
-	t.Run("ConnectedTrue", func(t *testing.T) {
-		if metaManagerConfig.Connected != true {
-			t.Errorf("Connected was not set to true")
-		}
-	})
+	add := &common.ModuleInfo{
+		ModuleName: meta.Name(),
+		ModuleType: common.MsgCtxTypeChannel,
+	}
+	beehiveContext.AddModule(add)
+	beehiveContext.AddModuleGroup(meta.Name(), meta.Group())
+	edgeHub := &common.ModuleInfo{
+		ModuleName: ModuleNameEdgeHub,
+		ModuleType: common.MsgCtxTypeChannel,
+	}
+	beehiveContext.AddModule(edgeHub)
+	beehiveContext.AddModuleGroup(ModuleNameEdgeHub, modules.HubGroup)
+	edged := &common.ModuleInfo{
+		ModuleName: ModuleNameEdged,
+		ModuleType: common.MsgCtxTypeChannel,
+	}
+	beehiveContext.AddModule(edged)
+
+	connect.SetConnected(true)
 
 	//process remote query jsonMarshall error
-	querySeterMock.EXPECT().All(gomock.Any()).Return(int64(1), errFailedDBOperation).Times(1)
-	querySeterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(querySeterMock).Times(1)
-	ormerMock.EXPECT().QueryTable(gomock.Any()).Return(querySeterMock).Times(1)
-	msg = model.NewMessage("").BuildRouter(ModuleNameEdgeHub, GroupResource, "test/"+model.ResourceTypeConfigmap, model.QueryOperation)
+	querySetterMock.EXPECT().All(gomock.Any()).Return(int64(1), errFailedDBOperation).Times(1)
+	querySetterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(querySetterMock).Times(1)
+	ormerMock.EXPECT().QueryTable(gomock.Any()).Return(querySetterMock).Times(1)
+	msg := model.NewMessage("").BuildRouter(ModuleNameEdgeHub, GroupResource, "test/"+model.ResourceTypeConfigmap, model.QueryOperation)
 	meta.processQuery(*msg)
 	message, _ := beehiveContext.Receive(ModuleNameEdgeHub)
 	msg = model.NewMessage(message.GetID()).BuildRouter(ModuleNameEdgeHub, GroupResource, "test/"+model.ResourceTypeConfigmap, model.QueryOperation).FillBody(make(chan int))
 	beehiveContext.SendResp(*msg)
 	message, _ = beehiveContext.Receive(ModuleNameEdgeHub)
 	t.Run("ProcessRemoteQueryMarshallFail", func(t *testing.T) {
-		want := MarshalError
+		want := "Error to get remote query response message content data: marshal message content failed: json: unsupported type: chan int"
 		if message.GetContent() != want {
 			t.Errorf("Wrong Error message received : Wanted %v and Got %v", want, message.GetContent())
 		}
 	})
 
+	//process remote query response error content
+	querySetterMock.EXPECT().All(gomock.Any()).Return(int64(1), errFailedDBOperation).Times(1)
+	querySetterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(querySetterMock).Times(1)
+	ormerMock.EXPECT().QueryTable(gomock.Any()).Return(querySetterMock).Times(1)
+	msg = model.NewMessage("").BuildRouter(ModuleNameEdgeHub, GroupResource, "test/"+model.ResourceTypeConfigmap, model.QueryOperation)
+	meta.processQuery(*msg)
+	message, _ = beehiveContext.Receive(ModuleNameEdgeHub)
+	msg = model.NewMessage(message.GetID()).BuildRouter(ModuleNameEdgeHub, GroupResource, "test/"+model.ResourceTypeConfigmap, model.QueryOperation).FillBody(fmt.Errorf("test"))
+	beehiveContext.SendResp(*msg)
+	message, _ = beehiveContext.Receive(ModuleNameEdgeHub)
+	msgEdged, _ := beehiveContext.Receive(ModuleNameEdged)
+	t.Run("ProcessRemoteQueryResponseErrorContent", func(t *testing.T) {
+		want := OK
+		if message.GetContent().(string) != want {
+			t.Errorf("Wrong Error message received : Wanted %v and Got %v", want, message.GetContent())
+		}
+		wantEdged := fmt.Errorf("test").Error()
+		if msgEdged.GetContent().(error).Error() != wantEdged {
+			t.Errorf("Wrong Error message received : Wanted %v and Got %v", wantEdged, msgEdged.GetContent().(error).Error())
+		}
+	})
+
 	//process remote query db fail
-	rawSeterMock.EXPECT().Exec().Return(nil, errFailedDBOperation).Times(1)
-	ormerMock.EXPECT().Raw(gomock.Any(), gomock.Any()).Return(rawSeterMock).Times(1)
-	querySeterMock.EXPECT().All(gomock.Any()).Return(int64(1), errFailedDBOperation).Times(1)
-	querySeterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(querySeterMock).Times(1)
-	ormerMock.EXPECT().QueryTable(gomock.Any()).Return(querySeterMock).Times(1)
+	rawSetterMock.EXPECT().Exec().Return(nil, errFailedDBOperation).Times(1)
+	ormerMock.EXPECT().Raw(gomock.Any(), gomock.Any()).Return(rawSetterMock).Times(1)
+	querySetterMock.EXPECT().All(gomock.Any()).Return(int64(1), errFailedDBOperation).Times(1)
+	querySetterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(querySetterMock).Times(1)
+	ormerMock.EXPECT().QueryTable(gomock.Any()).Return(querySetterMock).Times(1)
 	msg = model.NewMessage("").BuildRouter(ModuleNameEdgeHub, GroupResource, "test/"+model.ResourceTypeConfigmap, model.QueryOperation)
 	meta.processQuery(*msg)
 	message, _ = beehiveContext.Receive(ModuleNameEdgeHub)
@@ -458,9 +501,9 @@ func TestProcessQuery(t *testing.T) {
 	fakeDaoArray := make([]dao.Meta, 1)
 	fakeDaoArray[0] = dao.Meta{Key: "Test", Value: MessageTest}
 	fakeDao = &fakeDaoArray
-	querySeterMock.EXPECT().All(gomock.Any()).SetArg(0, *fakeDao).Return(int64(1), nil).Times(1)
-	querySeterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(querySeterMock).Times(1)
-	ormerMock.EXPECT().QueryTable(gomock.Any()).Return(querySeterMock).Times(1)
+	querySetterMock.EXPECT().All(gomock.Any()).SetArg(0, *fakeDao).Return(int64(1), nil).Times(1)
+	querySetterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(querySetterMock).Times(1)
+	ormerMock.EXPECT().QueryTable(gomock.Any()).Return(querySetterMock).Times(1)
 	msg = model.NewMessage("").BuildRouter(ModuleNameEdgeHub, GroupResource, "test/"+model.ResourceTypeConfigmap, model.QueryOperation)
 	meta.processQuery(*msg)
 	message, _ = beehiveContext.Receive(ModuleNameEdged)
@@ -477,9 +520,9 @@ func TestProcessQuery(t *testing.T) {
 	//ResId Nil database error
 	msg = model.NewMessage("").BuildRouter(ModuleNameEdgeHub, GroupResource, model.ResourceTypePodStatus, OperationNodeConnection).FillBody(connect.CloudDisconnected)
 
-	querySeterMock.EXPECT().All(gomock.Any()).Return(int64(1), errFailedDBOperation).Times(1)
-	querySeterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(querySeterMock).Times(1)
-	ormerMock.EXPECT().QueryTable(gomock.Any()).Return(querySeterMock).Times(1)
+	querySetterMock.EXPECT().All(gomock.Any()).Return(int64(1), errFailedDBOperation).Times(1)
+	querySetterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(querySetterMock).Times(1)
+	ormerMock.EXPECT().QueryTable(gomock.Any()).Return(querySetterMock).Times(1)
 	msg = model.NewMessage("").BuildRouter(ModuleNameEdgeHub, GroupResource, model.ResourceTypeConfigmap, model.QueryOperation)
 	meta.processQuery(*msg)
 	message, _ = beehiveContext.Receive(ModuleNameEdgeHub)
@@ -491,9 +534,9 @@ func TestProcessQuery(t *testing.T) {
 	})
 
 	//ResID not nil database error
-	querySeterMock.EXPECT().All(gomock.Any()).Return(int64(1), errFailedDBOperation).Times(1)
-	querySeterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(querySeterMock).Times(1)
-	ormerMock.EXPECT().QueryTable(gomock.Any()).Return(querySeterMock).Times(1)
+	querySetterMock.EXPECT().All(gomock.Any()).Return(int64(1), errFailedDBOperation).Times(1)
+	querySetterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(querySetterMock).Times(1)
+	ormerMock.EXPECT().QueryTable(gomock.Any()).Return(querySetterMock).Times(1)
 	msg = model.NewMessage("").BuildRouter(ModuleNameEdgeHub, GroupResource, "test/test/"+model.ResourceTypeConfigmap, model.QueryOperation)
 	//beehiveContext.Send(MetaManagerModuleName, *msg)
 	meta.processQuery(*msg)
@@ -506,9 +549,9 @@ func TestProcessQuery(t *testing.T) {
 	})
 
 	//ResID not nil Success Case
-	querySeterMock.EXPECT().All(gomock.Any()).SetArg(0, *fakeDao).Return(int64(1), nil).Times(1)
-	querySeterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(querySeterMock).Times(1)
-	ormerMock.EXPECT().QueryTable(gomock.Any()).Return(querySeterMock).Times(1)
+	querySetterMock.EXPECT().All(gomock.Any()).SetArg(0, *fakeDao).Return(int64(1), nil).Times(1)
+	querySetterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(querySetterMock).Times(1)
+	ormerMock.EXPECT().QueryTable(gomock.Any()).Return(querySetterMock).Times(1)
 	msg = model.NewMessage("").BuildRouter(ModuleNameEdgeHub, GroupResource, "test/test/"+model.ResourceTypeConfigmap, model.QueryOperation)
 	//beehiveContext.Send(MetaManagerModuleName, *msg)
 	meta.processQuery(*msg)
@@ -520,183 +563,6 @@ func TestProcessQuery(t *testing.T) {
 		bytesGot, _ := json.Marshal(message.GetContent())
 		if string(bytesGot) != string(bytesWant) {
 			t.Errorf("Wrong message receive : Wanted %v and Got %v", want, message.GetContent())
-		}
-	})
-}
-
-// TestProcessNodeConnection is function to test processNodeConnection
-func TestProcessNodeConnection(t *testing.T) {
-	mockCtrl := gomock.NewController(t)
-	defer mockCtrl.Finish()
-	ormerMock := beego.NewMockOrmer(mockCtrl)
-	dbm.DBAccess = ormerMock
-	meta := newMetaManager(true)
-	core.Register(meta)
-	beehiveContext.InitContext(beehiveContext.MsgCtxTypeChannel)
-	beehiveContext.AddModule(meta.Name())
-	beehiveContext.AddModuleGroup(meta.Name(), meta.Group())
-	beehiveContext.AddModule(ModuleNameEdgeHub)
-	beehiveContext.AddModule(EdgeFunctionModel)
-
-	//connected true
-	msg := model.NewMessage("").BuildRouter(ModuleNameEdgeHub, GroupResource, model.ResourceTypePodStatus, OperationNodeConnection).FillBody(connect.CloudConnected)
-	meta.processNodeConnection(*msg)
-	//wait for message to be received by metaManager and get processed
-	time.Sleep(1 * time.Second)
-	t.Run("ConnectedTrue", func(t *testing.T) {
-		if metaManagerConfig.Connected != true {
-			t.Errorf("Connected was not set to true")
-		}
-	})
-
-	//connected false
-	msg = model.NewMessage("").BuildRouter(ModuleNameEdgeHub, GroupResource, model.ResourceTypePodStatus, OperationNodeConnection).FillBody(connect.CloudDisconnected)
-	meta.processNodeConnection(*msg)
-	//wait for message to be received by metaManager and get processed
-	time.Sleep(1 * time.Second)
-	t.Run("ConnectedFalse", func(t *testing.T) {
-		if metaManagerConfig.Connected != false {
-			t.Errorf("Connected was not set to false")
-		}
-	})
-}
-
-// TestProcessSync is function to test processSync
-func TestProcessSync(t *testing.T) {
-	mockCtrl := gomock.NewController(t)
-	defer mockCtrl.Finish()
-	ormerMock := beego.NewMockOrmer(mockCtrl)
-	querySeterMock := beego.NewMockQuerySeter(mockCtrl)
-	dbm.DBAccess = ormerMock
-	meta := newMetaManager(true)
-	core.Register(meta)
-	beehiveContext.InitContext(beehiveContext.MsgCtxTypeChannel)
-	beehiveContext.AddModule(meta.Name())
-	beehiveContext.AddModuleGroup(meta.Name(), meta.Group())
-	beehiveContext.AddModule(ModuleNameEdgeHub)
-	beehiveContext.AddModuleGroup(ModuleNameEdgeHub, modules.HubGroup)
-
-	//QueryMeta Length > 0 Success Case
-	fakeDao := new([]dao.Meta)
-	fakeDaoArray := make([]dao.Meta, 1)
-	fakeDaoArray[0] = dao.Meta{Key: "Test/Test/Test", Value: "\"Test\""}
-	fakeDao = &fakeDaoArray
-	querySeterMock.EXPECT().All(gomock.Any()).SetArg(0, *fakeDao).Return(int64(1), nil).Times(2)
-	querySeterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(querySeterMock).Times(2)
-	ormerMock.EXPECT().QueryTable(gomock.Any()).Return(querySeterMock).Times(2)
-	meta.processSync()
-	message, _ := beehiveContext.Receive(ModuleNameEdgeHub)
-	t.Run("QueryMetaLengthSuccess Case", func(t *testing.T) {
-		want := make([]interface{}, 1)
-		want[0] = "Test"
-		bytesWant, _ := json.Marshal(want)
-		bytesGot, _ := json.Marshal(message.GetContent())
-		if string(bytesGot) != string(bytesWant) {
-			t.Errorf("Wrong message receive : Wanted %v and Got %v", want, message.GetContent())
-		}
-	})
-}
-
-// TestProcessFunctionAction is function to test processFunctionAction
-func TestProcessFunctionAction(t *testing.T) {
-	mockCtrl := gomock.NewController(t)
-	defer mockCtrl.Finish()
-	ormerMock := beego.NewMockOrmer(mockCtrl)
-	dbm.DBAccess = ormerMock
-	meta := newMetaManager(true)
-	core.Register(meta)
-	beehiveContext.InitContext(beehiveContext.MsgCtxTypeChannel)
-	beehiveContext.AddModule(meta.Name())
-	beehiveContext.AddModuleGroup(meta.Name(), meta.Group())
-	beehiveContext.AddModule(ModuleNameEdgeHub)
-	beehiveContext.AddModuleGroup(ModuleNameEdgeHub, modules.HubGroup)
-	beehiveContext.AddModule(EdgeFunctionModel)
-
-	//jsonMarshall fail
-	msg := model.NewMessage("").BuildRouter(ModuleNameEdgeHub, GroupResource, model.ResourceTypePodStatus, OperationFunctionAction).FillBody(make(chan int))
-	meta.processFunctionAction(*msg)
-	//beehiveContext.Send(MetaManagerModuleName, *msg)
-	message, _ := beehiveContext.Receive(ModuleNameEdgeHub)
-	t.Run("MarshallFail", func(t *testing.T) {
-		want := MarshalError
-		if message.GetContent() != want {
-			t.Errorf("Wrong Error message received : Wanted %v and Got %v", want, message.GetContent())
-		}
-	})
-
-	//Database Save Error
-	ormerMock.EXPECT().Insert(gomock.Any()).Return(int64(1), errFailedDBOperation).Times(1)
-	msg = model.NewMessage("").BuildRouter(ModuleNameEdgeHub, GroupResource, model.ResourceTypePodStatus, OperationFunctionAction).FillBody("test")
-	meta.processFunctionAction(*msg)
-	//beehiveContext.Send(MetaManagerModuleName, *msg)
-	message, _ = beehiveContext.Receive(ModuleNameEdgeHub)
-	t.Run("DatabaseSaveError", func(t *testing.T) {
-		want := "Error to save meta to DB: " + FailedDBOperation
-		if message.GetContent() != want {
-			t.Errorf("Wrong message received : Wanted %v and Got %v", want, message.GetContent())
-		}
-	})
-
-	//Success Case
-	ormerMock.EXPECT().Insert(gomock.Any()).Return(int64(1), nil).Times(1)
-	msg = model.NewMessage("").BuildRouter(ModuleNameEdgeHub, GroupResource, model.ResourceTypePodStatus, OperationFunctionAction)
-	meta.processFunctionAction(*msg)
-	//beehiveContext.Send(MetaManagerModuleName, *msg)
-	message, _ = beehiveContext.Receive(EdgeFunctionModel)
-	t.Run("SuccessCase", func(t *testing.T) {
-		want := ModuleNameEdgeHub
-		if message.GetSource() != want {
-			t.Errorf("Wrong message received : Wanted from source %v and Got from source %v", want, message.GetSource())
-		}
-	})
-}
-
-// TestProcessFunctionActionResult is function to test processFunctionActionResult
-func TestProcessFunctionActionResult(t *testing.T) {
-	mockCtrl := gomock.NewController(t)
-	defer mockCtrl.Finish()
-	ormerMock := beego.NewMockOrmer(mockCtrl)
-	dbm.DBAccess = ormerMock
-	meta := newMetaManager(true)
-	core.Register(meta)
-	beehiveContext.InitContext(beehiveContext.MsgCtxTypeChannel)
-	beehiveContext.AddModule(meta.Name())
-	beehiveContext.AddModuleGroup(meta.Name(), meta.Group())
-	beehiveContext.AddModule(ModuleNameEdgeHub)
-	beehiveContext.AddModuleGroup(ModuleNameEdgeHub, modules.HubGroup)
-
-	//jsonMarshall fail
-	msg := model.NewMessage("").BuildRouter(EdgeFunctionModel, GroupResource, model.ResourceTypePodStatus, OperationFunctionActionResult).FillBody(make(chan int))
-	meta.processFunctionActionResult(*msg)
-	message, _ := beehiveContext.Receive(ModuleNameEdgeHub)
-	t.Run("MarshallFail", func(t *testing.T) {
-		want := MarshalError
-		if message.GetContent() != want {
-			t.Errorf("Wrong Error message received : Wanted %v and Got %v", want, message.GetContent())
-		}
-	})
-
-	//Database Save Error
-	ormerMock.EXPECT().Insert(gomock.Any()).Return(int64(1), errFailedDBOperation).Times(1)
-	msg = model.NewMessage("").BuildRouter(EdgeFunctionModel, GroupResource, model.ResourceTypePodStatus, OperationFunctionActionResult)
-	meta.processFunctionActionResult(*msg)
-	message, _ = beehiveContext.Receive(ModuleNameEdgeHub)
-	t.Run("DatabaseSaveError", func(t *testing.T) {
-		want := "Error to save meta to DB: " + FailedDBOperation
-		if message.GetContent() != want {
-			t.Errorf("Wrong message received : Wanted %v and Got %v", want, message.GetContent())
-		}
-	})
-
-	//Success Case
-	ormerMock.EXPECT().Insert(gomock.Any()).Return(int64(1), nil).Times(1)
-	msg = model.NewMessage("").BuildRouter(EdgeFunctionModel, GroupResource, model.ResourceTypePodStatus, OperationFunctionActionResult)
-	meta.processFunctionActionResult(*msg)
-	message, _ = beehiveContext.Receive(ModuleNameEdgeHub)
-	t.Run("SuccessCase", func(t *testing.T) {
-		want := EdgeFunctionModel
-		if message.GetSource() != want {
-			t.Errorf("Wrong message received : Wanted %v and Got %v", want, message.GetSource())
 		}
 	})
 }

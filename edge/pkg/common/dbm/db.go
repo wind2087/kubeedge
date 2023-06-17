@@ -18,13 +18,13 @@ var once sync.Once
 func InitDBConfig(driverName, dbName, dataSource string) {
 	once.Do(func() {
 		if err := orm.RegisterDriver(driverName, orm.DRSqlite); err != nil {
-			klog.Fatalf("Failed to register driver: %v", err)
+			klog.Exitf("Failed to register driver: %v", err)
 		}
 		if err := orm.RegisterDataBase(
 			dbName,
 			driverName,
 			dataSource); err != nil {
-			klog.Fatalf("Failed to register db: %v", err)
+			klog.Exitf("Failed to register db: %v", err)
 		}
 		// sync database schema
 		if err := orm.RunSyncdb(dbName, false, true); err != nil {
@@ -36,4 +36,20 @@ func InitDBConfig(driverName, dbName, dataSource string) {
 			klog.Errorf("Using db access error %v", err)
 		}
 	})
+}
+
+type newOrmerFunc func() orm.Ormer
+
+var DefaultOrmFunc newOrmerFunc = newOrmer
+
+func newOrmer() orm.Ormer {
+	return orm.NewOrm()
+}
+
+// RollbackTransaction rollback transaction and log err if rollback fail
+func RollbackTransaction(orm orm.Ormer) {
+	err := orm.Rollback()
+	if err != nil {
+		klog.Errorf("failed to rollback transaction, err: %v", err)
+	}
 }

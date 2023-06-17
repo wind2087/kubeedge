@@ -33,7 +33,7 @@ status: implementable
 
 ## Motivation
 This proposal addresses the Container Runtime Interface support in edged to enable the following
-1. Support light weight container runtimes on resource constrained edge node which are unable to run the existing docker runtime
+1. Support lightweight container runtimes on resource constrained edge node which are unable to run the existing docker runtime
 2. Support multiple container runtimes like docker, containerd, cri-o etc on the edge node.
 
 ### Goals
@@ -47,9 +47,9 @@ CRI support in edged must:
 
 ## Proposal
 
-Currently Kubernetes kubelet CRI supports container runtimes like containerd, cri-o etc and support for docker runtime is
-provided using dockershim as well. However going forward even docker runtime will be supported through only CRI. However
-currently kubeedge edged supports only docker runtime using the legacy dockertools. Hence we propose to support multiple
+Currently, Kubernetes kubelet CRI supports container runtimes like containerd, cri-o etc. and support for docker runtime is
+provided using dockershim as well. However, going forward even docker runtime will be supported through only CRI. However,
+currently kubeedge edged supports only docker runtime using the legacy dockertools. Hence, we propose to support multiple
 container runtime in kubeedge edged as follows
 1. Include CRI support as in kubernetes kubelet to support contianerd, cri-o etc
 2. Continue with docker runtime support using legacy dockertools until CRI support for the same is available i.e. support
@@ -58,14 +58,13 @@ for docker runtime using dockershim is not considered in edged
 
 ### Use Cases
 
-* Customer can run light weight container runtime on resource constrained edge node that cannot run the existing docker runtime
+* Customer can run lightweight container runtime on resource constrained edge node that cannot run the existing docker runtime
 * Customer has the option to choose from multiple container runtimes on his edge platform
 
 
 ## High Level Design
 
 ### Edged with CRI support
-<img src="../images/edged/docker-cri.png">
 
 ## Low Level Design
 
@@ -73,13 +72,13 @@ for docker runtime using dockershim is not considered in edged
 
 The following configuration parameters need to be added
 
-No | Parameter | Type | Values | Description
----|---|---|---|---
-1 | runtimeType | string | docker/remote | Runtime name
-2   | remoteRuntimeEndpoint | string | /var/run/*.sock | Endpoint of remote runtime service
-3   | remoteImageEndpoint | string | same as remoteRuntimeEndpoint if not specified | Endpoint of remote image service
-4   | RuntimeRequestTimeout | Duration | time value | timeout for all runtime request
-5   | PodSandboxImage | string | image name | Image used for pause container in sandbox
+| No  | Parameter             | Type     | Values                                         | Description                               |
+|-----|-----------------------|----------|------------------------------------------------|-------------------------------------------|
+| 1   | runtimeType           | string   | docker/remote                                  | Runtime name                              |
+| 2   | remoteRuntimeEndpoint | string   | /var/run/*.sock                                | Endpoint of remote runtime service        |
+| 3   | remoteImageEndpoint   | string   | same as remoteRuntimeEndpoint if not specified | Endpoint of remote image service          |
+| 4   | RuntimeRequestTimeout | Duration | time value                                     | timeout for all runtime request           |
+| 5   | PodSandboxImage       | string   | image name                                     | Image used for pause container in sandbox |
 
 ```go
 type Config struct {
@@ -114,8 +113,8 @@ type edged struct {
 ###  Edged object creation modifications
 
 The existing newEdged() function needs to modified include creating CRI runtime object based on the runtime type including
-creations of objects for runtime and image services. However the existing edged does not provide the support for all the
-parameters required to create the CRI runtime object and default parameters need to be considered for the same like Image GC manager, Container GC manager, Volume manager and container lifecycle manager (clcm)
+creations of objects for runtime and image services. However, the existing edged does not provide the support for all the
+parameters required to create the CRI runtime object and default parameters need to be considered for the same as Image GC manager, Container GC manager, Volume manager and container lifecycle manager (clcm)
 
 ```go
 
@@ -157,7 +156,7 @@ func getRuntimeAndImageServices(remoteRuntimeEndpoint string, remoteImageEndpoin
        Initialize Remote Image Service
  }
 ```
-The function to read the configuration needs to be modified to include the parameters required for remote runtime. By default
+The function to read the configuration needs to be modified to include the parameters required for remote runtime. By default,
 docker runtime shall be used and also default values for the parameters need to be provided if the parameters are not provided
 in the configuration file.
 
@@ -171,7 +170,7 @@ func getConfig() *Config {
 		Get remote runtime endpoint and set to /var/run/containerd/container.sock if not provided
 		Get remote image endpoint and set same as remote runtime endpoint of not provided
                 Get runtime Request Timeout and set to default of 2 min if not provided
-                Get PodSandboxImage and set to k8s.gcr.io/pause
+                Get PodSandboxImage and set to kubeedge/pause
  	....
 }
 

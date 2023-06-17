@@ -10,7 +10,6 @@ import (
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/message"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
-	"github.com/kubeedge/kubeedge/edge/pkg/metamanager"
 )
 
 // PersistentVolumeClaimsGetter is interface to get client PersistentVolumeClaims
@@ -58,18 +57,12 @@ func (c *persistentvolumeclaims) Get(name string, options metav1.GetOptions) (*a
 		return nil, fmt.Errorf("get persistentvolumeclaim from metaManager failed, err: %v", err)
 	}
 
-	var content []byte
-	switch msg.Content.(type) {
-	case []byte:
-		content = msg.GetContent().([]byte)
-	default:
-		content, err = json.Marshal(msg.GetContent())
-		if err != nil {
-			return nil, fmt.Errorf("marshal message to persistentvolumeclaim failed, err: %v", err)
-		}
+	content, err := msg.GetContentData()
+	if err != nil {
+		return nil, fmt.Errorf("parse message to persistentvolumeclaim failed, err: %v", err)
 	}
 
-	if msg.GetOperation() == model.ResponseOperation && msg.GetSource() == metamanager.MetaManagerModuleName {
+	if msg.GetOperation() == model.ResponseOperation && msg.GetSource() == modules.MetaManagerModuleName {
 		return handlePersistentVolumeClaimFromMetaDB(content)
 	}
 	return handlePersistentVolumeClaimFromMetaManager(content)
@@ -86,19 +79,19 @@ func handlePersistentVolumeClaimFromMetaDB(content []byte) (*api.PersistentVolum
 		return nil, fmt.Errorf("persistentvolumeclaim length from meta db is %d", len(lists))
 	}
 
-	var pvc *api.PersistentVolumeClaim
+	var pvc api.PersistentVolumeClaim
 	err = json.Unmarshal([]byte(lists[0]), &pvc)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshal message to persistentvolumeclaim from db failed, err: %v", err)
 	}
-	return pvc, nil
+	return &pvc, nil
 }
 
 func handlePersistentVolumeClaimFromMetaManager(content []byte) (*api.PersistentVolumeClaim, error) {
-	var pvc *api.PersistentVolumeClaim
+	var pvc api.PersistentVolumeClaim
 	err := json.Unmarshal(content, &pvc)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshal message to persistentvolumeclaim failed, err: %v", err)
 	}
-	return pvc, nil
+	return &pvc, nil
 }

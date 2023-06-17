@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -17,6 +16,7 @@ import (
 	"github.com/shirou/gopsutil/mem"
 	"github.com/spf13/cobra"
 
+	"github.com/kubeedge/kubeedge/common/constants"
 	"github.com/kubeedge/kubeedge/keadm/cmd/keadm/app/cmd/common"
 	"github.com/kubeedge/kubeedge/keadm/cmd/keadm/app/cmd/util"
 )
@@ -29,9 +29,6 @@ and maintenance personnel to locate the problem`
 	edgeCheckExample          = `
         # Check all items .
         keadm debug check all
-
-        # Check whether the node arch is supported .
-        keadm debug check arch
 
         # Check whether the node CPU meets  requirements.
         keadm debug check cpu
@@ -58,8 +55,8 @@ and maintenance personnel to locate the problem`
 
 type CheckObject common.CheckObject
 
-// NewEdgecheck returns KubeEdge edge check command.
-func NewCheck(out io.Writer, collectOptions *common.CheckOptions) *cobra.Command {
+// NewCheck returns KubeEdge edge check command.
+func NewCheck() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "check",
 		Short:   edgeCheckShortDescription,
@@ -67,14 +64,14 @@ func NewCheck(out io.Writer, collectOptions *common.CheckOptions) *cobra.Command
 		Example: edgeCheckExample,
 	}
 	for _, v := range common.CheckObjectMap {
-		cmd.AddCommand(NewSubEdgeCheck(out, CheckObject(v)))
+		cmd.AddCommand(NewSubEdgeCheck(CheckObject(v)))
 	}
 	return cmd
 }
 
-// NewEdgecheck returns KubeEdge edge check subcommand.
-func NewSubEdgeCheck(out io.Writer, object CheckObject) *cobra.Command {
-	co := NewCheckOptins()
+// NewSubEdgeCheck returns KubeEdge edge check subcommand.
+func NewSubEdgeCheck(object CheckObject) *cobra.Command {
+	co := NewCheckOptions()
 	cmd := &cobra.Command{
 		Short: object.Desc,
 		Use:   object.Use,
@@ -90,7 +87,7 @@ func NewSubEdgeCheck(out io.Writer, object CheckObject) *cobra.Command {
 		cmd.Flags().StringVarP(&co.Runtime, "runtime", "r", co.Runtime, "specify test runtime")
 		cmd.Flags().StringVarP(&co.DNSIP, "dns-ip", "D", co.DNSIP, "specify test dns ip")
 		cmd.Flags().StringVarP(&co.Config, common.EdgecoreConfig, "c", co.Config,
-			fmt.Sprintf("Specify configuration file, defalut is %s", common.EdgecoreConfigPath))
+			fmt.Sprintf("Specify configuration file, default is %s", common.EdgecoreConfigPath))
 	case common.ArgCheckDNS:
 		cmd.Flags().StringVarP(&co.Domain, "domain", "d", co.Domain, "specify test domain")
 		cmd.Flags().StringVarP(&co.DNSIP, "dns-ip", "D", co.DNSIP, "specify test dns ip")
@@ -98,7 +95,7 @@ func NewSubEdgeCheck(out io.Writer, object CheckObject) *cobra.Command {
 		cmd.Flags().StringVarP(&co.IP, "ip", "i", co.IP, "specify test ip")
 		cmd.Flags().StringVarP(&co.CloudHubServer, "cloud-hub-server", "s", co.CloudHubServer, "specify cloudhub server")
 		cmd.Flags().StringVarP(&co.Config, common.EdgecoreConfig, "c", co.Config,
-			fmt.Sprintf("Specify configuration file, defalut is %s", common.EdgecoreConfigPath))
+			fmt.Sprintf("Specify configuration file, default is %s", common.EdgecoreConfigPath))
 	case common.ArgCheckRuntime:
 		cmd.Flags().StringVarP(&co.Runtime, "runtime", "r", co.Runtime, "specify test runtime")
 	}
@@ -106,16 +103,16 @@ func NewSubEdgeCheck(out io.Writer, object CheckObject) *cobra.Command {
 	return cmd
 }
 
-// Add flags
-func NewCheckOptins() *common.CheckOptions {
+// NewCheckOptions returns check options
+func NewCheckOptions() *common.CheckOptions {
 	co := &common.CheckOptions{}
-	co.Runtime = common.DefaultRuntime
+	co.Runtime = constants.DefaultRuntimeType
 	co.Domain = "www.github.com"
 	co.Timeout = 1
 	return co
 }
 
-// Start to check data
+// ExecuteCheck starts to check data
 func (co *CheckObject) ExecuteCheck(use string, ob *common.CheckOptions) {
 	err := fmt.Errorf("")
 
@@ -288,11 +285,10 @@ func CheckNetWork(IP string, timeout int, cloudhubServer string, edgecoreServer 
 	if config != "" {
 		edgeConfig, err := util.ParseEdgecoreConfig(config)
 		if err != nil {
-			err = fmt.Errorf("parse Edgecore config failed")
-		} else {
-			if cloudhubServer == "" {
-				cloudhubServer = edgeConfig.Modules.EdgeHub.WebSocket.Server
-			}
+			return fmt.Errorf("parse Edgecore config failed")
+		}
+		if cloudhubServer == "" {
+			cloudhubServer = edgeConfig.Modules.EdgeHub.WebSocket.Server
 		}
 	}
 
@@ -326,7 +322,7 @@ func CheckNetWork(IP string, timeout int, cloudhubServer string, edgecoreServer 
 	if edgecoreServer != "" {
 		err := CheckHTTP("http://" + edgecoreServer)
 		if err != nil {
-			return fmt.Errorf("check edgecoreServer %s failed, %v", edgecoreServer, edgecoreServer)
+			return fmt.Errorf("check edgecoreServer %s failed, %v", edgecoreServer, err)
 		}
 		fmt.Printf("check edgecoreServer %s success\n", edgecoreServer)
 	}
@@ -351,7 +347,7 @@ func CheckHTTP(url string) error {
 }
 
 func CheckRuntime(runtime string) error {
-	if runtime == common.DefaultRuntime {
+	if runtime == constants.DefaultRuntimeType {
 		result, err := util.ExecShellFilter(common.CmdGetStatusDocker)
 		if err != nil {
 			return err

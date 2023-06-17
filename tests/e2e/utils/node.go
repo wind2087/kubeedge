@@ -18,19 +18,26 @@ package utils
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
+	"os"
 	"path"
 	"path/filepath"
 	"runtime"
 	"time"
 
-	"github.com/ghodss/yaml"
 	"github.com/onsi/gomega"
 	v1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	clientset "k8s.io/client-go/kubernetes"
+	"sigs.k8s.io/yaml"
+
+	"github.com/kubeedge/kubeedge/common/constants"
 )
 
 func getpwd() string {
@@ -60,7 +67,7 @@ func DeRegisterNodeFromMaster(nodehandler, nodename string) error {
 func GenerateNodeReqBody(nodeid, nodeselector string) (map[string]interface{}, error) {
 	var temp map[string]interface{}
 
-	body := fmt.Sprintf(`{"kind": "Node","apiVersion": "v1","metadata": {"name": "%s","labels": {"name": "edgenode", "disktype":"%s", "node-role.kubernetes.io/edge": ""}}}`, nodeid, nodeselector)
+	body := fmt.Sprintf(`{"kind": "Node","apiVersion": "v1","metadata": {"name": "%s","labels": {"name": "edgenode", "disktype":"%s", "%s": "%s"}}}`, nodeid, nodeselector, constants.EdgeNodeRoleKey, constants.EdgeNodeRoleValue)
 	err := json.Unmarshal([]byte(body), &temp)
 	if err != nil {
 		Fatalf("Unmarshal body failed: %v", err)
@@ -121,7 +128,7 @@ func CheckNodeReadyStatus(nodehandler, nodename string) string {
 	}
 	defer resp.Body.Close()
 
-	contents, err := ioutil.ReadAll(resp.Body)
+	contents, err := io.ReadAll(resp.Body)
 	if err != nil {
 		Fatalf("HTTP Response reading has failed: %v", err)
 		return nodeStatus
@@ -156,7 +163,7 @@ func HandleConfigmap(configName chan error, operation, confighandler string, IsE
 	} else {
 		file = path.Join(curpath, "../../performance/assets/01-configmap.yaml")
 	}
-	body, err := ioutil.ReadFile(file)
+	body, err := os.ReadFile(file)
 	if err == nil {
 		client := &http.Client{}
 		t := time.Now()
@@ -201,27 +208,12 @@ func HandleConfigmap(configName chan error, operation, confighandler string, IsE
 	}
 }
 
-//GetConfigmap function to get configmaps for respective edgenodes
-func GetConfigmap(apiConfigMap string) (int, []byte) {
-	resp, err := SendHTTPRequest(http.MethodGet, apiConfigMap)
-	if err != nil {
-		Fatalf("Sending SenHttpRequest failed: %v", err)
-		return -1, nil
+func DeleteConfigMap(client clientset.Interface, ns, name string) error {
+	err := client.CoreV1().ConfigMaps(ns).Delete(context.TODO(), name, metav1.DeleteOptions{})
+	if err != nil && apierrors.IsNotFound(err) {
+		return nil
 	}
-	body, _ := ioutil.ReadAll(resp.Body)
-	defer resp.Body.Close()
-	return resp.StatusCode, body
-}
-
-//DeleteConfigmap function to delete configmaps
-func DeleteConfigmap(apiConfigMap string) int {
-	resp, err := SendHTTPRequest(http.MethodDelete, apiConfigMap)
-	if err != nil {
-		Fatalf("Sending SenHttpRequest failed: %v", err)
-		return -1
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode
+	return err
 }
 
 func TaintEdgeDeployedNode(toTaint bool, taintHandler string) error {
@@ -268,7 +260,7 @@ func GetNodes(api string) v1.NodeList {
 	}
 	defer resp.Body.Close()
 
-	contents, err := ioutil.ReadAll(resp.Body)
+	contents, err := io.ReadAll(resp.Body)
 	if err != nil {
 		Fatalf("HTTP Response reading has failed: %v", err)
 	}

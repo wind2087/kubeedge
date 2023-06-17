@@ -18,16 +18,17 @@ package validation
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	componentbaseconfig "k8s.io/component-base/config"
 	"k8s.io/klog/v2"
+	netutils "k8s.io/utils/net"
 
-	"github.com/kubeedge/kubeedge/common/constants"
 	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/cloudcore/v1alpha1"
 	utilvalidation "github.com/kubeedge/kubeedge/pkg/util/validation"
 )
@@ -36,25 +37,39 @@ import (
 func ValidateCloudCoreConfiguration(c *v1alpha1.CloudCoreConfig) field.ErrorList {
 	allErrs := field.ErrorList{}
 	allErrs = append(allErrs, ValidateKubeAPIConfig(*c.KubeAPIConfig)...)
+	allErrs = append(allErrs, ValidateCommonConfig(*c.CommonConfig)...)
 	allErrs = append(allErrs, ValidateModuleCloudHub(*c.Modules.CloudHub)...)
 	allErrs = append(allErrs, ValidateModuleEdgeController(*c.Modules.EdgeController)...)
 	allErrs = append(allErrs, ValidateModuleDeviceController(*c.Modules.DeviceController)...)
 	allErrs = append(allErrs, ValidateModuleSyncController(*c.Modules.SyncController)...)
 	allErrs = append(allErrs, ValidateModuleDynamicController(*c.Modules.DynamicController)...)
-	allErrs = append(allErrs, ValidateLeaderElectionConfiguration(*c.LeaderElection)...)
 	allErrs = append(allErrs, ValidateModuleCloudStream(*c.Modules.CloudStream)...)
 	return allErrs
 }
 
-//ValidateLeaderElectionConfiguration validates part `l` and returns an errorList if it is invalid, the rest will be validated at run time
-func ValidateLeaderElectionConfiguration(l componentbaseconfig.LeaderElectionConfiguration) field.ErrorList {
-	if !l.LeaderElect {
-		return field.ErrorList{}
-	}
+func ValidateCommonConfig(c v1alpha1.CommonConfig) field.ErrorList {
+	return validateHostPort(c.MonitorServer.BindAddress, field.NewPath("monitorServer.bindAddress"))
+}
+
+func validateHostPort(input string, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	if l.ResourceNamespace != constants.KubeEdgeNameSpace {
-		allErrs = append(allErrs, field.Required(field.NewPath("ResourceNamespace"), "resourceLock's namesapce must be kubeedge"))
+
+	hostIP, port, err := net.SplitHostPort(input)
+	if err != nil {
+		allErrs = append(allErrs, field.Invalid(fldPath, input, "must be IP:port"))
+		return allErrs
 	}
+
+	if ip := netutils.ParseIPSloppy(hostIP); ip == nil {
+		allErrs = append(allErrs, field.Invalid(fldPath, hostIP, "must be a valid IP"))
+	}
+
+	if p, err := strconv.Atoi(port); err != nil {
+		allErrs = append(allErrs, field.Invalid(fldPath, port, "must be a valid port"))
+	} else if p < 1 || p > 65535 {
+		allErrs = append(allErrs, field.Invalid(fldPath, port, "must be a valid port"))
+	}
+
 	return allErrs
 }
 

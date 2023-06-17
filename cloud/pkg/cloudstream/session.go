@@ -90,11 +90,12 @@ func (s *Session) ProxyTunnelMessageToApiserver(message *stream.Message) error {
 	defer s.apiConnlock.RUnlock()
 	kubeCon, ok := s.apiServerConn[message.ConnectID]
 	if !ok {
-		return fmt.Errorf("Can not find apiServer connection id %v in %v",
+		return fmt.Errorf("can not find apiServer connection id %v in %v",
 			message.ConnectID, s.String())
 	}
 	switch message.MessageType {
 	case stream.MessageTypeRemoveConnect:
+		klog.V(6).Infof("delete connection %v from %v", message.ConnectID, s.String())
 		kubeCon.SetEdgePeerDone()
 	case stream.MessageTypeData:
 		for i := 0; i < len(message.Data); {
@@ -115,10 +116,12 @@ func (s *Session) String() string {
 
 func (s *Session) AddAPIServerConnection(ss *StreamServer, connection APIServerConnection) (APIServerConnection, error) {
 	id := atomic.AddUint64(&(ss.nextMessageID), 1)
+
 	s.apiConnlock.Lock()
 	defer s.apiConnlock.Unlock()
+
 	if s.tunnelClosed {
-		return nil, fmt.Errorf("The tunnel connection of %v has closed", s.String())
+		return nil, fmt.Errorf("the tunnel connection of %v has closed", s.String())
 	}
 	connection.SetMessageID(id)
 	s.apiServerConn[id] = connection
@@ -128,7 +131,10 @@ func (s *Session) AddAPIServerConnection(ss *StreamServer, connection APIServerC
 
 func (s *Session) DeleteAPIServerConnection(con APIServerConnection) {
 	s.apiConnlock.Lock()
-	defer s.apiConnlock.Unlock()
 	delete(s.apiServerConn, con.GetMessageID())
+	// Other operations do not affect the release of the lock,
+	// but will increase the lock holding time,
+	// so the lock needs to be released in advance.
+	s.apiConnlock.Unlock()
 	klog.Infof("Delete a apiserver connection %s from %s", con.String(), s.String())
 }

@@ -2,6 +2,7 @@ package cloudstream
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -21,6 +22,7 @@ type ContainerExecConnection struct {
 	Conn         net.Conn
 	session      *Session
 	edgePeerStop chan struct{}
+	closeChan    chan bool
 }
 
 func (c *ContainerExecConnection) String() string {
@@ -40,10 +42,15 @@ func (c *ContainerExecConnection) GetMessageID() uint64 {
 }
 
 func (c *ContainerExecConnection) SetEdgePeerDone() {
-	close(c.edgePeerStop)
+	select {
+	case <-c.closeChan:
+		return
+	case c.EdgePeerDone() <- struct{}{}:
+		klog.V(6).Infof("success send channel deleting connection with messageID %v", c.MessageID)
+	}
 }
 
-func (c *ContainerExecConnection) EdgePeerDone() <-chan struct{} {
+func (c *ContainerExecConnection) EdgePeerDone() chan struct{} {
 	return c.edgePeerStop
 }
 
@@ -73,6 +80,7 @@ func (c *ContainerExecConnection) SendConnection() (stream.EdgedConnection, erro
 
 func (c *ContainerExecConnection) Serve() error {
 	defer func() {
+		close(c.closeChan)
 		klog.V(6).Infof("%s stop successfully", c.String())
 	}()
 
@@ -82,42 +90,50 @@ func (c *ContainerExecConnection) Serve() error {
 		return err
 	}
 
+	sendCloseMessage := func() {
+		msg := stream.NewMessage(c.MessageID, stream.MessageTypeRemoveConnect, nil)
+		for retry := 0; retry < 3; retry++ {
+			if err := c.WriteToTunnel(msg); err == nil {
+				klog.V(6).Infof("%s send close message to edge successfully", c.String())
+				return
+			}
+			klog.Warningf("%v failed send %s message to edge, err: %v", c, msg.MessageType, err)
+		}
+		klog.Errorf("max retry count reached when send %s message to edge", msg.MessageType)
+	}
+
 	var data [256]byte
 	for {
 		select {
 		case <-c.ctx.Done():
 			// if apiserver request end, send close message to edge
-			msg := stream.NewMessage(c.MessageID, stream.MessageTypeRemoveConnect, nil)
-			for retry := 0; retry < 3; retry++ {
-				if err := c.WriteToTunnel(msg); err != nil {
-					klog.Warningf("%v failed send %s message to edge, err: %v, would retry", c, msg.MessageType, err)
-				} else {
-					break
-				}
-			}
-			klog.V(6).Infof("%s send close message to edge successfully", c.String())
+			sendCloseMessage()
 			return nil
 		case <-c.EdgePeerDone():
 			klog.V(6).Infof("%s find edge peer done, so stop this connection", c.String())
-			return nil
+			return fmt.Errorf("%s find edge peer done, so stop this connection", c.String())
 		default:
 		}
-		for {
+		func() {
 			n, err := c.Conn.Read(data[:])
 			if err != nil {
-				if err != io.EOF {
+				if !errors.Is(err, io.EOF) {
 					klog.Errorf("%s failed to read from client: %v", c.String(), err)
+					return
 				}
-				break
+				klog.V(6).Infof("%s read EOF from client", c.String())
+				sendCloseMessage()
+				return
 			}
 			if n <= 0 {
-				continue
+				return
 			}
 			msg := stream.NewMessage(connector.GetMessageID(), stream.MessageTypeData, data[:n])
 			if err := c.WriteToTunnel(msg); err != nil {
 				klog.Errorf("%s failed to write to tunnel server, err: %v", c.String(), err)
+				return
 			}
-		}
+		}()
 	}
 }
 

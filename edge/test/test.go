@@ -3,7 +3,6 @@ package test
 import (
 	"encoding/json"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"time"
 
@@ -15,7 +14,7 @@ import (
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/message"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha1"
+	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha2"
 )
 
 const (
@@ -25,13 +24,15 @@ const (
 )
 
 // TODO move this files into /edge/pkg/dbtest @kadisi
-func Register(t *v1alpha1.DBTest) {
+func Register(t *v1alpha2.DBTest) {
 	core.Register(&testManager{enable: t.Enable})
 }
 
 type testManager struct {
 	enable bool
 }
+
+var _ core.Module = (*testManager)(nil)
 
 func (tm *testManager) Name() string {
 	return name
@@ -65,7 +66,7 @@ func GetPodListFromEdged(w http.ResponseWriter) error {
 	}
 	klog.Infof("%s %s %v in %v", req.Method, req.URL, resp.Status, time.Since(t))
 	defer resp.Body.Close()
-	contents, err := ioutil.ReadAll(resp.Body)
+	contents, err := io.ReadAll(resp.Body)
 	if err != nil {
 		klog.Errorf("HTTP Response reading has failed: %v", err)
 		return err
@@ -96,7 +97,7 @@ func (tm *testManager) podHandler(w http.ResponseWriter, req *http.Request) {
 			klog.Errorf("Get podlist from Edged has failed: %v", err)
 		}
 	} else if req.Body != nil {
-		body, err := ioutil.ReadAll(req.Body)
+		body, err := io.ReadAll(req.Body)
 		if err != nil {
 			klog.Errorf("read body error %v", err)
 			w.Write([]byte("read request body error"))
@@ -120,8 +121,8 @@ func (tm *testManager) podHandler(w http.ResponseWriter, req *http.Request) {
 		if p.Namespace != "" {
 			ns = p.Namespace
 		}
-		msgReq := message.BuildMsg("resource", string(p.UID), "edgecontroller", ns+"/pod/"+string(p.Name), operation, p)
-		beehiveContext.Send("metaManager", *msgReq)
+		msgReq := message.BuildMsg("resource", string(p.UID), "edgecontroller", ns+"/pod/"+p.Name, operation, p)
+		beehiveContext.Send(modules.MetaManagerModuleName, *msgReq)
 		klog.Infof("send message to metaManager is %+v\n", msgReq)
 	}
 }
@@ -132,7 +133,7 @@ func (tm *testManager) deviceHandler(w http.ResponseWriter, req *http.Request) {
 	var Content interface{}
 
 	if req.Body != nil {
-		body, err := ioutil.ReadAll(req.Body)
+		body, err := io.ReadAll(req.Body)
 		if err != nil {
 			klog.Errorf("read body error %v", err)
 			w.Write([]byte("read request body error"))
@@ -161,7 +162,7 @@ func (tm *testManager) secretHandler(w http.ResponseWriter, req *http.Request) {
 	var operation string
 	var p v1.Secret
 	if req.Body != nil {
-		body, err := ioutil.ReadAll(req.Body)
+		body, err := io.ReadAll(req.Body)
 		if err != nil {
 			klog.Errorf("read body error %v", err)
 			w.Write([]byte("read request body error"))
@@ -182,7 +183,7 @@ func (tm *testManager) secretHandler(w http.ResponseWriter, req *http.Request) {
 		}
 
 		msgReq := message.BuildMsg("edgehub", string(p.UID), "test", "fakeNamespace/secret/"+string(p.UID), operation, p)
-		beehiveContext.Send("metaManager", *msgReq)
+		beehiveContext.Send(modules.MetaManagerModuleName, *msgReq)
 		klog.Infof("send message to metaManager is %+v\n", msgReq)
 	}
 }
@@ -191,7 +192,7 @@ func (tm *testManager) configmapHandler(w http.ResponseWriter, req *http.Request
 	var operation string
 	var p v1.ConfigMap
 	if req.Body != nil {
-		body, err := ioutil.ReadAll(req.Body)
+		body, err := io.ReadAll(req.Body)
 		if err != nil {
 			klog.Errorf("read body error %v", err)
 			w.Write([]byte("read request body error"))
@@ -212,7 +213,7 @@ func (tm *testManager) configmapHandler(w http.ResponseWriter, req *http.Request
 		}
 
 		msgReq := message.BuildMsg("edgehub", string(p.UID), "test", "fakeNamespace/configmap/"+string(p.UID), operation, p)
-		beehiveContext.Send("metaManager", *msgReq)
+		beehiveContext.Send(modules.MetaManagerModuleName, *msgReq)
 		klog.Infof("send message to metaManager is %+v\n", msgReq)
 	}
 }

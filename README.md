@@ -4,8 +4,11 @@
 [![LICENSE](https://img.shields.io/github/license/kubeedge/kubeedge.svg?style=flat-square)](/LICENSE)
 [![Releases](https://img.shields.io/github/release/kubeedge/kubeedge/all.svg?style=flat-square)](https://github.com/kubeedge/kubeedge/releases)
 [![Documentation Status](https://readthedocs.org/projects/kubeedge/badge/?version=latest)](https://kubeedge.readthedocs.io/en/latest/?badge=latest)
+[![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/3018/badge)](https://bestpractices.coreinfrastructure.org/projects/3018)
 
 <img src="./docs/images/kubeedge-logo-only.png">
+
+English | [简体中文](./README_zh.md)
 
 KubeEdge is built upon Kubernetes and extends native containerized application orchestration and device management to hosts at the Edge.
 It consists of cloud part and edge part, provides core infrastructure support for networking, application deployment and metadata synchronization
@@ -19,7 +22,7 @@ KubeEdge is an incubation-level hosted project by the [Cloud Native Computing Fo
 
 **Note**:
 
-The versions before *1.3* have not been supported, please try upgrade.
+The versions before *1.8* have not been supported, please try upgrade.
 
 ## Advantages
 
@@ -50,18 +53,18 @@ KubeEdge consists of cloud part and edge part.
 - [EdgeHub](https://kubeedge.io/en/docs/architecture/edge/edgehub): a web socket client responsible for interacting with Cloud Service for the edge computing (like Edge Controller as in the KubeEdge Architecture). This includes syncing cloud-side resource updates to the edge, and reporting edge-side host and device status changes to the cloud.
 - [Edged](https://kubeedge.io/en/docs/architecture/edge/edged): an agent that runs on edge nodes and manages containerized applications.
 - [EventBus](https://kubeedge.io/en/docs/architecture/edge/eventbus): a MQTT client to interact with MQTT servers (mosquitto), offering publish and subscribe capabilities to other components.
-- [ServiceBus](https://kubeedge.io/en/docs/architecture/edge/servicebus): a HTTP client to interact with HTTP servers (REST), offering HTTP client capabilities to components of cloud to reach HTTP servers running at edge.
+- [ServiceBus](https://kubeedge.io/en/docs/architecture/edge/servicebus): an HTTP client to interact with HTTP servers (REST), offering HTTP client capabilities to components of cloud to reach HTTP servers running at edge.
 - [DeviceTwin](https://kubeedge.io/en/docs/architecture/edge/devicetwin): responsible for storing device status and syncing device status to the cloud. It also provides query interfaces for applications.
 - [MetaManager](https://kubeedge.io/en/docs/architecture/edge/metamanager): the message processor between edged and edgehub. It is also responsible for storing/retrieving metadata to/from a lightweight database (SQLite).
 
 ## Kubernetes compatibility
 
-|                        | Kubernetes 1.13 | Kubernetes 1.14 | Kubernetes 1.15 | Kubernetes 1.16 | Kubernetes 1.17 | Kubernetes 1.18 | Kubernetes 1.19 |
+|                        | Kubernetes 1.17 | Kubernetes 1.18 | Kubernetes 1.19 | Kubernetes 1.20 | Kubernetes 1.21 | Kubernetes 1.22 | Kubernetes 1.23 |
 |------------------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|
-| KubeEdge 1.3           | ✓               | ✓               | ✓               | ✓               | ✓             | ✓               | ✓               |
-| KubeEdge 1.4           | ✓               | ✓               | ✓               | ✓               | ✓             | ✓               | ✓               |
-| KubeEdge 1.5           | ✓               | ✓               | ✓               | ✓               | ✓             | ✓               | ✓               |
-| KubeEdge HEAD (master) | ✓               | ✓               | ✓               | ✓               | ✓             | ✓               | ✓               |
+| KubeEdge 1.11          | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | -               |
+| KubeEdge 1.12          | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | -               |
+| KubeEdge 1.13          | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |
+| KubeEdge HEAD (master) | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |
 
 Key:
 * `✓` KubeEdge and the Kubernetes version are exactly compatible.
@@ -109,6 +112,22 @@ If you have questions, feel free to reach out to us in the following ways:
 If you're interested in being a contributor and want to get involved in
 developing the KubeEdge code, please see [CONTRIBUTING](./CONTRIBUTING.md) for
 details on submitting patches and the contribution workflow.
+
+## Security
+
+### Security Audit
+
+A third party security audit of KubeEdge has been completed in July 2022. Additionally, the KubeEdge community completed an overall system security analysis of KubeEdge. The detailed reports are as follows.
+
+- [Security audit](https://github.com/kubeedge/community/blob/master/sig-security/sig-security-audit/KubeEdge-security-audit-2022.pdf)
+
+- [Threat model and security protection analysis paper](https://github.com/kubeedge/community/blob/master/sig-security/sig-security-audit/KubeEdge-threat-model-and-security-protection-analysis.md)
+
+### Reporting security vulnerabilities
+
+We encourage security researchers, industry organizations and users to proactively report suspected vulnerabilities to our security team (`cncf-kubeedge-security@lists.cncf.io`), the team will help diagnose the severity of the issue and determine how to address the issue as soon as possible.
+
+For further details please see [Security Policy](https://github.com/kubeedge/community/blob/master/team-security/SECURITY.md) for our security process and how to report vulnerabilities.
 
 ## License
 

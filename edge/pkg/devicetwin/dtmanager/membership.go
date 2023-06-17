@@ -40,7 +40,7 @@ func (mw MemWorker) Start() {
 			}
 			if dtMsg, isDTMessage := msg.(*dttype.DTMessage); isDTMessage {
 				if fn, exist := memActionCallBack[dtMsg.Action]; exist {
-					_, err := fn(mw.DTContexts, dtMsg.Identity, dtMsg.Msg)
+					err := fn(mw.DTContexts, dtMsg.Identity, dtMsg.Msg)
 					if err != nil {
 						klog.Errorf("MemModule deal %s event failed: %v", dtMsg.Action, err)
 					}
@@ -83,22 +83,22 @@ func getRemoveList(context *dtcontext.DTContext, devices []dttype.Device) []dtty
 	})
 	return toRemove
 }
-func dealMembershipDetail(context *dtcontext.DTContext, resource string, msg interface{}) (interface{}, error) {
+func dealMembershipDetail(context *dtcontext.DTContext, resource string, msg interface{}) error {
 	klog.Info("Deal node detail info")
 	message, ok := msg.(*model.Message)
 	if !ok {
-		return nil, errors.New("msg not Message type")
+		return errors.New("msg not Message type")
 	}
 
 	contentData, ok := message.Content.([]byte)
 	if !ok {
-		return nil, errors.New("assertion failed")
+		return errors.New("assertion failed")
 	}
 
 	devices, err := dttype.UnmarshalMembershipDetail(contentData)
 	if err != nil {
 		klog.Errorf("Unmarshal membership info failed , err: %#v", err)
-		return nil, err
+		return err
 	}
 
 	baseMessage := dttype.BaseMessage{EventID: devices.EventID}
@@ -109,29 +109,29 @@ func dealMembershipDetail(context *dtcontext.DTContext, resource string, msg int
 	addDevice(context, devices.Devices, baseMessage, isDelta)
 	toRemove = getRemoveList(context, devices.Devices)
 
-	if toRemove != nil || len(toRemove) != 0 {
+	if len(toRemove) != 0 {
 		removeDevice(context, toRemove, baseMessage, isDelta)
 	}
 	klog.Info("Deal node detail info successful")
-	return nil, nil
+	return nil
 }
 
-func dealMembershipUpdate(context *dtcontext.DTContext, resource string, msg interface{}) (interface{}, error) {
+func dealMembershipUpdate(context *dtcontext.DTContext, resource string, msg interface{}) error {
 	klog.Infof("Membership event")
 	message, ok := msg.(*model.Message)
 	if !ok {
-		return nil, errors.New("msg not Message type")
+		return errors.New("msg not Message type")
 	}
 
 	contentData, ok := message.Content.([]byte)
 	if !ok {
-		return nil, errors.New("assertion failed")
+		return errors.New("assertion failed")
 	}
 
 	updateEdgeGroups, err := dttype.UnmarshalMembershipUpdate(contentData)
 	if err != nil {
 		klog.Errorf("Unmarshal membership info failed , err: %#v", err)
-		return nil, err
+		return err
 	}
 
 	baseMessage := dttype.BaseMessage{EventID: updateEdgeGroups.EventID}
@@ -143,23 +143,25 @@ func dealMembershipUpdate(context *dtcontext.DTContext, resource string, msg int
 		// delete device
 		removeDevice(context, updateEdgeGroups.RemoveDevices, baseMessage, false)
 	}
-	return nil, nil
+	return nil
 }
 
-func dealMembershipGet(context *dtcontext.DTContext, resource string, msg interface{}) (interface{}, error) {
+func dealMembershipGet(context *dtcontext.DTContext, resource string, msg interface{}) error {
 	klog.Infof("MEMBERSHIP EVENT")
 	message, ok := msg.(*model.Message)
 	if !ok {
-		return nil, errors.New("msg not Message type")
+		return errors.New("msg not Message type")
 	}
 
 	contentData, ok := message.Content.([]byte)
 	if !ok {
-		return nil, errors.New("assertion failed")
+		return errors.New("assertion failed")
 	}
 
-	dealMembershipGetInner(context, contentData)
-	return nil, nil
+	if err := dealMembershipGetInner(context, contentData); err != nil {
+		return err
+	}
+	return nil
 }
 
 // addDevice add device to the edge group
@@ -240,7 +242,7 @@ func addDevice(context *dtcontext.DTContext, toAdd []dttype.Device, baseMessage 
 		addDeviceResult := dttype.MembershipUpdate{BaseMessage: baseMessage, AddDevices: addDeviceDevices}
 		result, err := dttype.MarshalMembershipUpdate(addDeviceResult)
 		if err != nil {
-
+			klog.Errorf("add device %s failed, marshal membership err: %s", device.ID, err)
 		} else {
 			context.Send("",
 				dtcommon.SendToEdge,
@@ -259,6 +261,7 @@ func removeDevice(context *dtcontext.DTContext, toRemove []dttype.Device, baseMe
 	if !delta {
 		baseMessage.EventID = ""
 	}
+
 	for _, device := range toRemove {
 		//update sqlite
 		_, deviceExist := context.GetDevice(device.ID)
@@ -294,13 +297,13 @@ func removeDevice(context *dtcontext.DTContext, toRemove []dttype.Device, baseMe
 		deleteResult := dttype.MembershipUpdate{BaseMessage: baseMessage, RemoveDevices: RemoveDevices}
 		result, err := dttype.MarshalMembershipUpdate(deleteResult)
 		if err != nil {
-
-		} else {
-			context.Send("",
-				dtcommon.SendToEdge,
-				dtcommon.CommModule,
-				context.BuildModelMessage(modules.BusGroup, "", topic, messagepkg.OperationPublish, result))
+			klog.Errorf("Remove device %s failed, marshal membership err: %s", device.ID, err)
+			continue
 		}
+		context.Send("",
+			dtcommon.SendToEdge,
+			dtcommon.CommModule,
+			context.BuildModelMessage(modules.BusGroup, "", topic, messagepkg.OperationPublish, result))
 
 		klog.Infof("Remove device %s successful", device.ID)
 	}
@@ -328,7 +331,7 @@ func dealMembershipGetInner(context *dtcontext.DTContext, payload []byte) error 
 		context.DeviceList.Range(func(key interface{}, value interface{}) bool {
 			device, ok := value.(*dttype.Device)
 			if !ok {
-
+				klog.Warningf("deviceList found invalid key-value pair, key: %s, value: %#v", key, value)
 			} else {
 				devices = append(devices, device)
 			}
@@ -345,11 +348,13 @@ func dealMembershipGetInner(context *dtcontext.DTContext, payload []byte) error 
 	topic := dtcommon.MemETPrefix + context.NodeName + dtcommon.MemETGetResultSuffix
 	klog.Infof("Deal getting membership successful and send the result")
 
-	context.Send("",
+	err = context.Send("",
 		dtcommon.SendToEdge,
 		dtcommon.CommModule,
 		context.BuildModelMessage(modules.BusGroup, "", topic, messagepkg.OperationPublish, result))
-
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -364,23 +369,23 @@ func SyncDeviceFromSqlite(context *dtcontext.DTContext, deviceID string) error {
 
 	devices, err := dtclient.QueryDevice("id", deviceID)
 	if err != nil {
-		klog.Errorf("query device attr failed: %v", err)
+		klog.Errorf("query device failed, id: %s, err: %v", deviceID, err)
 		return err
 	}
 	if len(*devices) == 0 {
-		return errors.New("Not found device")
+		return errors.New("not found device")
 	}
 	dbDoc := (*devices)[0]
 
 	deviceAttr, err := dtclient.QueryDeviceAttr("deviceid", deviceID)
 	if err != nil {
-		klog.Errorf("query device attr failed: %v", err)
+		klog.Errorf("query device attr failed, id: %s, err: %v", deviceID, err)
 		return err
 	}
 
 	deviceTwin, err := dtclient.QueryDeviceTwin("deviceid", deviceID)
 	if err != nil {
-		klog.Errorf("query device twin failed: %v", err)
+		klog.Errorf("query device twin failed, id: %s, err: %v", deviceID, err)
 		return err
 	}
 

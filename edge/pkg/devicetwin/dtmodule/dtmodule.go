@@ -14,42 +14,38 @@ type DTModule struct {
 	Worker dtmanager.DTWorker
 }
 
-// InitWorker init worker
+// InitWorker init worker for module
 func (dm *DTModule) InitWorker(recv chan interface{}, confirm chan interface{}, heartBeat chan interface{}, dtContext *dtcontext.DTContext) {
+	worker := dtmanager.Worker{
+		ReceiverChan:  recv,
+		ConfirmChan:   confirm,
+		HeartBeatChan: heartBeat,
+		DTContexts:    dtContext,
+	}
 	switch dm.Name {
 	case dtcommon.MemModule:
 		dm.Worker = dtmanager.MemWorker{
-			Group: dtcommon.MemModule,
-			Worker: dtmanager.Worker{
-				ReceiverChan:  recv,
-				ConfirmChan:   confirm,
-				HeartBeatChan: heartBeat,
-				DTContexts:    dtContext,
-			},
+			Group:  dtcommon.MemModule,
+			Worker: worker,
 		}
 	case dtcommon.TwinModule:
 		dm.Worker = dtmanager.TwinWorker{
-			Group: dtcommon.TwinModule,
-			Worker: dtmanager.Worker{
-				ReceiverChan:  recv,
-				ConfirmChan:   confirm,
-				HeartBeatChan: heartBeat,
-				DTContexts:    dtContext,
-			},
+			Group:  dtcommon.TwinModule,
+			Worker: worker,
 		}
 	case dtcommon.DeviceModule:
 		dm.Worker = dtmanager.DeviceWorker{
-			Group: dtcommon.DeviceModule,
-			Worker: dtmanager.Worker{
-				ReceiverChan:  recv,
-				ConfirmChan:   confirm,
-				HeartBeatChan: heartBeat,
-				DTContexts:    dtContext,
-			},
+			Group:  dtcommon.DeviceModule,
+			Worker: worker,
 		}
 	case dtcommon.CommModule:
 		dm.Worker = dtmanager.CommWorker{
-			Group: dtcommon.CommModule,
+			Group:  dtcommon.CommModule,
+			Worker: worker,
+		}
+	case dtcommon.DMIModule:
+		dm.Worker = dtmanager.DMIWorker{
+			Group: dtcommon.DMIModule,
 			Worker: dtmanager.Worker{
 				ReceiverChan:  recv,
 				ConfirmChan:   confirm,
@@ -64,7 +60,7 @@ func (dm *DTModule) InitWorker(recv chan interface{}, confirm chan interface{}, 
 func (dm DTModule) Start() {
 	defer func() {
 		if err := recover(); err != nil {
-			klog.Infof("%s in twin panic", dm.Name)
+			klog.Errorf("%s in twin panic with err: %v", dm.Name, err)
 		}
 	}()
 	dm.Worker.Start()

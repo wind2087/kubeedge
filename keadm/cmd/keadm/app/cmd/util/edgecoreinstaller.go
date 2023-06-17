@@ -17,6 +17,7 @@ limitations under the License.
 package util
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -25,10 +26,12 @@ import (
 
 	"github.com/kubeedge/kubeedge/common/constants"
 	types "github.com/kubeedge/kubeedge/keadm/cmd/keadm/app/cmd/common"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha1"
+	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha2"
+	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha2/validation"
+	"github.com/kubeedge/kubeedge/pkg/util"
 )
 
-// KubeEdgeInstTool embedes Common struct and contains cloud node ip:port information
+// KubeEdgeInstTool embeds Common struct and contains cloud node ip:port information
 // It implements ToolsInstaller interface
 type KubeEdgeInstTool struct {
 	Common
@@ -41,9 +44,10 @@ type KubeEdgeInstTool struct {
 	CertPort              string
 	CGroupDriver          string
 	TarballPath           string
+	Labels                []string
 }
 
-// InstallTools downloads KubeEdge for the specified verssion
+// InstallTools downloads KubeEdge for the specified version
 // and makes the required configuration changes and initiates edgecore.
 func (ku *KubeEdgeInstTool) InstallTools() error {
 	ku.SetOSInterface(GetOSInterface())
@@ -87,21 +91,21 @@ func (ku *KubeEdgeInstTool) createEdgeConfigFiles() error {
 		return fmt.Errorf("not able to create %s folder path", KubeEdgeConfigDir)
 	}
 
-	edgeCoreConfig := v1alpha1.NewDefaultEdgeCoreConfig()
+	edgeCoreConfig := v1alpha2.NewDefaultEdgeCoreConfig()
 	edgeCoreConfig.Modules.EdgeHub.WebSocket.Server = ku.CloudCoreIP
 
 	if ku.EdgeNodeName != "" {
 		edgeCoreConfig.Modules.Edged.HostnameOverride = ku.EdgeNodeName
 	}
 	if ku.RuntimeType != "" {
-		edgeCoreConfig.Modules.Edged.RuntimeType = ku.RuntimeType
+		edgeCoreConfig.Modules.Edged.ContainerRuntime = ku.RuntimeType
 	}
 	if ku.CGroupDriver != "" {
 		switch ku.CGroupDriver {
-		case v1alpha1.CGroupDriverSystemd:
-			edgeCoreConfig.Modules.Edged.CGroupDriver = v1alpha1.CGroupDriverSystemd
-		case v1alpha1.CGroupDriverCGroupFS:
-			edgeCoreConfig.Modules.Edged.CGroupDriver = v1alpha1.CGroupDriverCGroupFS
+		case v1alpha2.CGroupDriverSystemd:
+			edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.CgroupDriver = v1alpha2.CGroupDriverSystemd
+		case v1alpha2.CGroupDriverCGroupFS:
+			edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.CgroupDriver = v1alpha2.CGroupDriverCGroupFS
 		default:
 			return fmt.Errorf("unsupported CGroupDriver: %s", ku.CGroupDriver)
 		}
@@ -122,21 +126,27 @@ func (ku *KubeEdgeInstTool) createEdgeConfigFiles() error {
 	}
 	edgeCoreConfig.Modules.EdgeStream.TunnelServer = net.JoinHostPort(cloudCoreIP, strconv.Itoa(constants.DefaultTunnelPort))
 
-	if err := types.Write2File(KubeEdgeEdgeCoreNewYaml, edgeCoreConfig); err != nil {
-		return err
+	if len(ku.Labels) >= 1 {
+		labelsMap := make(map[string]string)
+		for _, label := range ku.Labels {
+			key := strings.Split(label, "=")[0]
+			value := strings.Split(label, "=")[1]
+			labelsMap[key] = value
+		}
+		edgeCoreConfig.Modules.Edged.NodeLabels = labelsMap
 	}
-	return nil
+
+	if errs := validation.ValidateEdgeCoreConfiguration(edgeCoreConfig); len(errs) > 0 {
+		return errors.New(util.SpliceErrors(errs.ToAggregate().Errors()))
+	}
+	return types.Write2File(KubeEdgeEdgeCoreNewYaml, edgeCoreConfig)
 }
 
-//TearDown method will remove the edge node from api-server and stop edgecore process
+// TearDown method will remove the edge node from api-server and stop edgecore process
 func (ku *KubeEdgeInstTool) TearDown() error {
 	ku.SetOSInterface(GetOSInterface())
 	ku.SetKubeEdgeVersion(ku.ToolVersion)
 
 	//Kill edge core process
-	if err := ku.KillKubeEdgeBinary(KubeEdgeBinaryName); err != nil {
-		return err
-	}
-
-	return nil
+	return ku.KillKubeEdgeBinary(KubeEdgeBinaryName)
 }

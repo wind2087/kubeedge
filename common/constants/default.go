@@ -14,8 +14,12 @@ const (
 	// NodeName is for the clearer log of cloudcore.
 	NodeName = "NodeName"
 
-	KubeEdge          = "kubeedge"
-	KubeEdgeNameSpace = "kubeedge"
+	ProjectName = "KubeEdge"
+
+	SystemName      = "kubeedge"
+	SystemNamespace = SystemName
+
+	CloudConfigMapName = "cloudcore"
 )
 
 // Resources
@@ -27,8 +31,9 @@ const (
 	DefaultCertFile  = "/etc/kubeedge/certs/server.crt"
 	DefaultKeyFile   = "/etc/kubeedge/certs/server.key"
 
-	DefaultCAURL   = "/ca.crt"
-	DefaultCertURL = "/edge.crt"
+	DefaultCAURL          = "/ca.crt"
+	DefaultCertURL        = "/edge.crt"
+	DefaultNodeUpgradeURL = "/nodeupgrade"
 
 	DefaultStreamCAFile   = "/etc/kubeedge/ca/streamCA.crt"
 	DefaultStreamCertFile = "/etc/kubeedge/certs/stream.crt"
@@ -38,21 +43,22 @@ const (
 	DefaultMqttCertFile = "/etc/kubeedge/certs/server.crt"
 	DefaultMqttKeyFile  = "/etc/kubeedge/certs/server.key"
 
-	// Election
-	DefaultCloudCoreReadyCheckURL = "/readyz"
+	// Bootstrap file, contains token used by edgecore to apply for ca/cert
+	BootstrapFile = "/etc/kubeedge/bootstrap-edgecore.conf"
 
 	// Edged
-	DefaultDockerAddress               = "unix:///var/run/docker.sock"
-	DefaultRuntimeType                 = "docker"
-	DefaultEdgedMemoryCapacity         = 7852396000
-	DefaultRemoteRuntimeEndpoint       = "unix:///var/run/dockershim.sock"
-	DefaultRemoteImageEndpoint         = "unix:///var/run/dockershim.sock"
-	DefaultPodSandboxImage             = "kubeedge/pause:3.1"
-	DefaultArmPodSandboxImage          = "kubeedge/pause-arm:3.1"
-	DefaultArm64PodSandboxImage        = "kubeedge/pause-arm64:3.1"
-	DefaultNodeStatusUpdateFrequency   = 10
-	DefaultImagePullProgressDeadline   = 60
-	DefaultRuntimeRequestTimeout       = 2
+	DefaultRootDir               = "/var/lib/edged"
+	DefaultDockerAddress         = "unix:///var/run/docker.sock"
+	DefaultRuntimeType           = "remote"
+	DefaultDockershimRootDir     = "/var/lib/dockershim"
+	DefaultEdgedMemoryCapacity   = 7852396000
+	DefaultRemoteRuntimeEndpoint = "unix:///run/containerd/containerd.sock"
+	DefaultRemoteImageEndpoint   = "unix:///run/containerd/containerd.sock"
+	DefaultMosquittoImage        = "eclipse-mosquitto:1.6.15"
+	// update PodSandboxImage version when bumping k8s vendor version, consistent with vendor/k8s.io/kubernetes/cmd/kubelet/app/options/container_runtime.go defaultPodSandboxImageVersion
+	// When this value are updated, also update comments in pkg/apis/componentconfig/edgecore/v1alpha1/types.go
+	DefaultPodSandboxImage             = "kubeedge/pause:3.6"
+	DefaultImagePullProgressDeadline   = time.Minute
 	DefaultImageGCHighThreshold        = 80
 	DefaultImageGCLowThreshold         = 40
 	DefaultMaximumDeadContainersPerPod = 1
@@ -66,53 +72,55 @@ const (
 	DefaultCgroupRoot                  = ""
 	DefaultVolumeStatsAggPeriod        = time.Minute
 	DefaultTunnelPort                  = 10004
+	DefaultClusterDomain               = "cluster.local"
 
-	CurrentSupportK8sVersion = "v1.19.3"
+	CurrentSupportK8sVersion = "v1.23.15"
 
 	// MetaManager
-	DefaultPodStatusSyncInterval = 60
-	DefaultRemoteQueryTimeout    = 60
+	DefaultRemoteQueryTimeout = 60
+	DefaultMetaServerAddr     = "127.0.0.1:10550"
 
 	// Config
 	DefaultKubeContentType         = "application/vnd.kubernetes.protobuf"
-	DefaultKubeConfig              = "/root/.kube/config"
 	DefaultKubeNamespace           = v1.NamespaceAll
 	DefaultKubeQPS                 = 100.0
 	DefaultKubeBurst               = 200
+	DefaultNodeLimit               = 500
 	DefaultKubeUpdateNodeFrequency = 20
 
 	// EdgeController
 	DefaultUpdatePodStatusWorkers            = 1
 	DefaultUpdateNodeStatusWorkers           = 1
-	DefaultQueryConfigMapWorkers             = 4
-	DefaultQuerySecretWorkers                = 4
-	DefaultQueryServiceWorkers               = 4
-	DefaultQueryEndpointsWorkers             = 4
+	DefaultQueryConfigMapWorkers             = 100
+	DefaultQuerySecretWorkers                = 100
 	DefaultQueryPersistentVolumeWorkers      = 4
 	DefaultQueryPersistentVolumeClaimWorkers = 4
 	DefaultQueryVolumeAttachmentWorkers      = 4
-	DefaultQueryNodeWorkers                  = 4
+	DefaultCreateNodeWorkers                 = 100
 	DefaultUpdateNodeWorkers                 = 4
-	DefaultDeletePodWorkers                  = 4
+	DefaultPatchPodWorkers                   = 100
+	DefaultDeletePodWorkers                  = 100
+	DefaultUpdateRuleStatusWorkers           = 4
+	DefaultQueryLeaseWorkers                 = 100
+	DefaultServiceAccountTokenWorkers        = 100
 
 	DefaultUpdatePodStatusBuffer            = 1024
 	DefaultUpdateNodeStatusBuffer           = 1024
 	DefaultQueryConfigMapBuffer             = 1024
 	DefaultQuerySecretBuffer                = 1024
-	DefaultQueryServiceBuffer               = 1024
-	DefaultQueryEndpointsBuffer             = 1024
 	DefaultQueryPersistentVolumeBuffer      = 1024
 	DefaultQueryPersistentVolumeClaimBuffer = 1024
 	DefaultQueryVolumeAttachmentBuffer      = 1024
-	DefaultQueryNodeBuffer                  = 1024
+	DefaultCreateNodeBuffer                 = 1024
 	DefaultUpdateNodeBuffer                 = 1024
+	DefaultPatchPodBuffer                   = 1024
 	DefaultDeletePodBuffer                  = 1024
+	DefaultQueryLeaseBuffer                 = 1024
+	DefaultServiceAccountTokenBuffer        = 1024
 
 	DefaultPodEventBuffer           = 1
 	DefaultConfigMapEventBuffer     = 1
 	DefaultSecretEventBuffer        = 1
-	DefaultServiceEventBuffer       = 1
-	DefaultEndpointsEventBuffer     = 1
 	DefaultRulesEventBuffer         = 1
 	DefaultRuleEndpointsEventBuffer = 1
 
@@ -122,14 +130,16 @@ const (
 	DefaultDeviceModelEventBuffer    = 1
 	DefaultUpdateDeviceStatusWorkers = 1
 
+	// NodeUpgradeJobController
+	DefaultNodeUpgradeJobStatusBuffer = 1024
+	DefaultNodeUpgradeJobEventBuffer  = 1
+	DefaultNodeUpgradeJobWorkers      = 1
+
 	// Resource sep
 	ResourceSep = "/"
 
-	ResourceTypeService       = "service"
-	ResourceTypeServiceList   = "servicelist"
-	ResourceTypeEndpoints     = "endpoints"
-	ResourceTypeEndpointsList = "endpointslist"
-	ResourceTypeListener      = "listener"
+	ResourceTypeService   = "service"
+	ResourceTypeEndpoints = "endpoints"
 
 	ResourceTypePersistentVolume      = "persistentvolume"
 	ResourceTypePersistentVolumeClaim = "persistentvolumeclaim"
@@ -144,5 +154,16 @@ const (
 
 	// ServerPort is the default port for the edgecore server on each host machine.
 	// May be overridden by a flag at startup in the future.
-	ServerPort = 10350
+	ServerAddress = "127.0.0.1"
+	ServerPort    = 10350
+
+	// MessageSuccessfulContent is the successful content value of Message struct
+	MessageSuccessfulContent string = "OK"
+	DefaultQPS                      = 30
+	DefaultBurst                    = 60
+	// MaxRespBodyLength is the max length of http response body
+	MaxRespBodyLength = 1 << 20 // 1 MiB
+
+	EdgeNodeRoleKey   = "node-role.kubernetes.io/edge"
+	EdgeNodeRoleValue = ""
 )

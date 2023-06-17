@@ -25,44 +25,23 @@ import (
 
 	"github.com/google/uuid"
 	v1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
-	"github.com/kubeedge/kubeedge/cloud/pkg/apis/devices/v1alpha2"
-	crdinformers "github.com/kubeedge/kubeedge/cloud/pkg/client/informers/externalversions"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/client"
+	"github.com/kubeedge/kubeedge/cloud/pkg/common/messagelayer"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
 	"github.com/kubeedge/kubeedge/cloud/pkg/devicecontroller/constants"
 	"github.com/kubeedge/kubeedge/cloud/pkg/devicecontroller/manager"
-	"github.com/kubeedge/kubeedge/cloud/pkg/devicecontroller/messagelayer"
 	"github.com/kubeedge/kubeedge/cloud/pkg/devicecontroller/types"
-)
-
-// Constants for protocol, datatype, configmap, deviceProfile
-const (
-	OPCUA              = "opcua"
-	Modbus             = "modbus"
-	Bluetooth          = "bluetooth"
-	CustomizedProtocol = "customized-protocol"
-
-	DataTypeInt     = "int"
-	DataTypeString  = "string"
-	DataTypeDouble  = "double"
-	DataTypeFloat   = "float"
-	DataTypeBoolean = "boolean"
-	DataTypeBytes   = "bytes"
-
-	ConfigMapKind    = "ConfigMap"
-	ConfigMapVersion = "v1"
-
-	DeviceProfileConfigPrefix = "device-profile-config-"
-
-	DeviceProfileJSON = "deviceProfile.json"
+	"github.com/kubeedge/kubeedge/pkg/apis/devices/v1alpha2"
+	crdinformers "github.com/kubeedge/kubeedge/pkg/client/informers/externalversions"
 )
 
 // DownstreamController watch kubernetes api server and send change to edge
@@ -73,8 +52,6 @@ type DownstreamController struct {
 	deviceManager      *manager.DeviceManager
 	deviceModelManager *manager.DeviceModelManager
 	configMapManager   *manager.ConfigMapManager
-
-	crdClient *rest.RESTClient
 }
 
 // syncDeviceModel is used to get events from informer
@@ -123,15 +100,13 @@ func isDeviceModelUpdated(oldTwin *v1alpha2.DeviceModel, newTwin *v1alpha2.Devic
 // deviceModelUpdated is function to process updated deviceModel
 func (dc *DownstreamController) deviceModelUpdated(deviceModel *v1alpha2.DeviceModel) {
 	value, ok := dc.deviceModelManager.DeviceModel.Load(deviceModel.Name)
-	dc.deviceModelManager.DeviceModel.Store(deviceModel.Name, deviceModel)
 	if ok {
 		cachedDeviceModel := value.(*v1alpha2.DeviceModel)
 		if isDeviceModelUpdated(cachedDeviceModel, deviceModel) {
 			dc.updateAllConfigMaps(deviceModel)
 		}
-	} else {
-		dc.deviceModelAdded(deviceModel)
 	}
+	dc.deviceModelAdded(deviceModel)
 }
 
 // updateAllConfigMaps is function to update configMaps which refer to an updated deviceModel
@@ -177,7 +152,7 @@ func (dc *DownstreamController) addToConfigMap(device *v1alpha2.Device) {
 	configMap, ok := dc.configMapManager.ConfigMap.Load(device.Spec.NodeSelector.NodeSelectorTerms[0].MatchExpressions[0].Values[0])
 	if !ok {
 		nodeConfigMap := &v1.ConfigMap{}
-		nodeConfigMap.Name = DeviceProfileConfigPrefix + device.Spec.NodeSelector.NodeSelectorTerms[0].MatchExpressions[0].Values[0]
+		nodeConfigMap.Name = constants.DeviceProfileConfigPrefix + device.Spec.NodeSelector.NodeSelectorTerms[0].MatchExpressions[0].Values[0]
 		nodeConfigMap.Namespace = device.Namespace
 		nodeConfigMap.Data = make(map[string]string)
 		// TODO: how to handle 2 device of multiple namespaces bind to same node ?
@@ -186,10 +161,12 @@ func (dc *DownstreamController) addToConfigMap(device *v1alpha2.Device) {
 		dc.configMapManager.ConfigMap.Store(device.Spec.NodeSelector.NodeSelectorTerms[0].MatchExpressions[0].Values[0], nodeConfigMap)
 
 		if _, err := dc.kubeClient.CoreV1().ConfigMaps(device.Namespace).Get(context.Background(), nodeConfigMap.Name, metav1.GetOptions{}); err != nil {
-			if _, err := dc.kubeClient.CoreV1().ConfigMaps(device.Namespace).Create(context.Background(), nodeConfigMap, metav1.CreateOptions{}); err != nil {
-				klog.Errorf("Failed to create config map %v in namespace %v, error %v", nodeConfigMap, device.Namespace, err)
-				return
+			if apierrors.IsNotFound(err) {
+				if _, err := dc.kubeClient.CoreV1().ConfigMaps(device.Namespace).Create(context.Background(), nodeConfigMap, metav1.CreateOptions{}); err != nil {
+					klog.Errorf("Failed to create config map %v in namespace %v, error %v", nodeConfigMap, device.Namespace, err)
+				}
 			}
+			return
 		}
 		if _, err := dc.kubeClient.CoreV1().ConfigMaps(device.Namespace).Update(context.Background(), nodeConfigMap, metav1.UpdateOptions{}); err != nil {
 			klog.Errorf("Failed to update config map %v in namespace %v, error %v", nodeConfigMap, device.Namespace, err)
@@ -214,13 +191,11 @@ func (dc *DownstreamController) addToConfigMap(device *v1alpha2.Device) {
 // addDeviceProfile is function to add deviceProfile in configMap
 func (dc *DownstreamController) addDeviceProfile(device *v1alpha2.Device, configMap *v1.ConfigMap) {
 	deviceProfile := &types.DeviceProfile{}
-	dp, ok := configMap.Data[DeviceProfileJSON]
+	dp, ok := configMap.Data[constants.DeviceProfileJSON]
 	if !ok {
 		// create deviceProfileStruct
 		deviceProfile.DeviceInstances = make([]*types.DeviceInstance, 0)
 		deviceProfile.DeviceModels = make([]*types.DeviceModel, 0)
-		//deviceProfile.PropertyVisitors = make([]*types.PropertyVisitor, 0)
-		//deviceProfile.Protocols = make([]*types.Protocol, 0)
 	} else {
 		err := json.Unmarshal([]byte(dp), deviceProfile)
 		if err != nil {
@@ -252,7 +227,7 @@ func (dc *DownstreamController) addDeviceProfile(device *v1alpha2.Device, config
 		klog.Errorf("Failed to marshal deviceprofile: %v", deviceProfile)
 		return
 	}
-	configMap.Data[DeviceProfileJSON] = string(bytes)
+	configMap.Data[constants.DeviceProfileJSON] = string(bytes)
 }
 
 // addDeviceModelAndVisitors adds deviceModels and deviceVisitors in configMap
@@ -266,36 +241,36 @@ func addDeviceModelAndVisitors(deviceModel *v1alpha2.DeviceModel, deviceProfile 
 		property.Description = ppt.Description
 		if ppt.Type.Int != nil {
 			property.AccessMode = string(ppt.Type.Int.AccessMode)
-			property.DataType = DataTypeInt
+			property.DataType = constants.DataTypeInt
 			property.DefaultValue = ppt.Type.Int.DefaultValue
 			property.Maximum = ppt.Type.Int.Maximum
 			property.Minimum = ppt.Type.Int.Minimum
 			property.Unit = ppt.Type.Int.Unit
 		} else if ppt.Type.String != nil {
 			property.AccessMode = string(ppt.Type.String.AccessMode)
-			property.DataType = DataTypeString
+			property.DataType = constants.DataTypeString
 			property.DefaultValue = ppt.Type.String.DefaultValue
 		} else if ppt.Type.Double != nil {
 			property.AccessMode = string(ppt.Type.Double.AccessMode)
-			property.DataType = DataTypeDouble
+			property.DataType = constants.DataTypeDouble
 			property.DefaultValue = ppt.Type.Double.DefaultValue
 			property.Maximum = ppt.Type.Double.Maximum
 			property.Minimum = ppt.Type.Double.Minimum
 			property.Unit = ppt.Type.Double.Unit
 		} else if ppt.Type.Float != nil {
 			property.AccessMode = string(ppt.Type.Float.AccessMode)
-			property.DataType = DataTypeFloat
+			property.DataType = constants.DataTypeFloat
 			property.DefaultValue = ppt.Type.Float.DefaultValue
 			property.Maximum = ppt.Type.Float.Maximum
 			property.Minimum = ppt.Type.Float.Minimum
 			property.Unit = ppt.Type.Float.Unit
 		} else if ppt.Type.Boolean != nil {
 			property.AccessMode = string(ppt.Type.Boolean.AccessMode)
-			property.DataType = DataTypeBoolean
+			property.DataType = constants.DataTypeBoolean
 			property.DefaultValue = ppt.Type.Boolean.DefaultValue
 		} else if ppt.Type.Bytes != nil {
 			property.AccessMode = string(ppt.Type.Bytes.AccessMode)
-			property.DataType = DataTypeBytes
+			property.DataType = constants.DataTypeBytes
 		}
 		model.Properties = append(model.Properties, property)
 	}
@@ -315,16 +290,16 @@ func addPropertyVisitorsToDeviceInstance(device *v1alpha2.Device, deviceInstance
 		propertyVisitor.ReportCycle = pptv.ReportCycle
 		propertyVisitor.CollectCycle = pptv.CollectCycle
 		if pptv.Modbus != nil {
-			propertyVisitor.Protocol = Modbus
+			propertyVisitor.Protocol = constants.Modbus
 			propertyVisitor.VisitorConfig = pptv.Modbus
 		} else if pptv.OpcUA != nil {
-			propertyVisitor.Protocol = OPCUA
+			propertyVisitor.Protocol = constants.OPCUA
 			propertyVisitor.VisitorConfig = pptv.OpcUA
 		} else if pptv.Bluetooth != nil {
-			propertyVisitor.Protocol = Bluetooth
+			propertyVisitor.Protocol = constants.Bluetooth
 			propertyVisitor.VisitorConfig = pptv.Bluetooth
 		} else if pptv.CustomizedProtocol != nil {
-			propertyVisitor.Protocol = CustomizedProtocol
+			propertyVisitor.Protocol = constants.CustomizedProtocol
 			propertyVisitor.VisitorConfig = pptv.CustomizedProtocol
 		}
 		if pptv.CustomizedValues != nil {
@@ -346,36 +321,42 @@ func addDeviceInstanceAndProtocol(device *v1alpha2.Device, deviceProfile *types.
 	}
 	var protocol string
 	if device.Spec.Protocol.OpcUA != nil {
-		protocol = OPCUA + "-" + device.Name
+		protocol = constants.OPCUA + "-" + device.Name
 		deviceInstance.Protocol = protocol
 		deviceProtocol.Name = protocol
-		deviceProtocol.Protocol = OPCUA
+		deviceProtocol.Protocol = constants.OPCUA
 		deviceProtocol.ProtocolConfig = device.Spec.Protocol.OpcUA
 	} else if device.Spec.Protocol.Modbus != nil {
-		protocol = Modbus + "-" + device.Name
+		protocol = constants.Modbus + "-" + device.Name
 		deviceInstance.Protocol = protocol
 		deviceProtocol.Name = protocol
-		deviceProtocol.Protocol = Modbus
+		deviceProtocol.Protocol = constants.Modbus
 		deviceProtocol.ProtocolConfig = device.Spec.Protocol.Modbus
 	} else if device.Spec.Protocol.Bluetooth != nil {
-		protocol = Bluetooth + "-" + device.Name
+		protocol = constants.Bluetooth + "-" + device.Name
 		deviceInstance.Protocol = protocol
 		deviceProtocol.Name = protocol
-		deviceProtocol.Protocol = Bluetooth
+		deviceProtocol.Protocol = constants.Bluetooth
 		deviceProtocol.ProtocolConfig = device.Spec.Protocol.Bluetooth
 	} else if device.Spec.Protocol.CustomizedProtocol != nil {
-		protocol = CustomizedProtocol + "-" + device.Name
+		protocol = constants.CustomizedProtocol + "-" + device.Name
 		deviceInstance.Protocol = protocol
 		deviceProtocol.Name = protocol
-		deviceProtocol.Protocol = CustomizedProtocol
+		deviceProtocol.Protocol = constants.CustomizedProtocol
 		deviceProtocol.ProtocolConfig = device.Spec.Protocol.CustomizedProtocol
 	} else {
 		klog.Warning("Device doesn't support valid protocol")
 	}
 
 	deviceInstance.Twins = device.Status.Twins
-	deviceInstance.DataProperties = device.Spec.Data.DataProperties
-	deviceInstance.DataTopic = device.Spec.Data.DataTopic
+
+	// add dataProperties and dataTopic
+	if len(device.Spec.Data.DataProperties) > 0 || len(device.Spec.Data.DataTopic) > 0 {
+		deviceInstance.Data = &v1alpha2.DeviceData{
+			DataProperties: device.Spec.Data.DataProperties,
+			DataTopic:      device.Spec.Data.DataTopic,
+		}
+	}
 
 	addPropertyVisitorsToDeviceInstance(device, deviceInstance)
 
@@ -391,7 +372,7 @@ func (dc *DownstreamController) deviceAdded(device *v1alpha2.Device) {
 		edgeDevice := createDevice(device)
 		msg := model.NewMessage("")
 
-		resource, err := messagelayer.BuildResource(device.Spec.NodeSelector.NodeSelectorTerms[0].MatchExpressions[0].Values[0], "membership", "")
+		resource, err := messagelayer.BuildResourceForDevice(device.Spec.NodeSelector.NodeSelectorTerms[0].MatchExpressions[0].Values[0], "membership", "")
 		if err != nil {
 			klog.Warningf("Built message resource failed with error: %s", err)
 			return
@@ -409,6 +390,9 @@ func (dc *DownstreamController) deviceAdded(device *v1alpha2.Device) {
 		if err != nil {
 			klog.Errorf("Failed to send device addition message %v due to error %v", msg, err)
 		}
+
+		dc.sendDeviceModelMsg(device, model.InsertOperation)
+		dc.sendDeviceMsg(device, model.InsertOperation)
 	}
 }
 
@@ -507,7 +491,7 @@ func (dc *DownstreamController) updateConfigMap(device *v1alpha2.Device) {
 			klog.Error("Failed to assert to configmap")
 			return
 		}
-		dp, ok := nodeConfigMap.Data[DeviceProfileJSON]
+		dp, ok := nodeConfigMap.Data[constants.DeviceProfileJSON]
 		if !ok || dp == "{}" {
 			// This case should never be hit as we delete empty configmaps
 			klog.Error("Failed to get deviceProfile from configmap data or deviceProfile is empty")
@@ -538,13 +522,13 @@ func (dc *DownstreamController) updateConfigMap(device *v1alpha2.Device) {
 		// add new protocol
 		deviceProtocol := &types.Protocol{}
 		if device.Spec.Protocol.OpcUA != nil {
-			deviceProtocol = buildDeviceProtocol(OPCUA, device.Name, device.Spec.Protocol.OpcUA)
+			deviceProtocol = buildDeviceProtocol(constants.OPCUA, device.Name, device.Spec.Protocol.OpcUA)
 		} else if device.Spec.Protocol.Modbus != nil {
-			deviceProtocol = buildDeviceProtocol(Modbus, device.Name, device.Spec.Protocol.Modbus)
+			deviceProtocol = buildDeviceProtocol(constants.Modbus, device.Name, device.Spec.Protocol.Modbus)
 		} else if device.Spec.Protocol.Bluetooth != nil {
-			deviceProtocol = buildDeviceProtocol(Bluetooth, device.Name, device.Spec.Protocol.Bluetooth)
+			deviceProtocol = buildDeviceProtocol(constants.Bluetooth, device.Name, device.Spec.Protocol.Bluetooth)
 		} else if device.Spec.Protocol.CustomizedProtocol != nil {
-			deviceProtocol = buildDeviceProtocol(CustomizedProtocol, device.Name, device.Spec.Protocol.CustomizedProtocol)
+			deviceProtocol = buildDeviceProtocol(constants.CustomizedProtocol, device.Name, device.Spec.Protocol.CustomizedProtocol)
 		} else {
 			klog.Warning("Unsupported device protocol")
 		}
@@ -558,10 +542,14 @@ func (dc *DownstreamController) updateConfigMap(device *v1alpha2.Device) {
 				addPropertyVisitorsToDeviceInstance(device, devInst)
 				// update twins
 				devInst.Twins = device.Status.Twins
-				// update data
-				devInst.DataProperties = device.Spec.Data.DataProperties
-				// update data topic
-				devInst.DataTopic = device.Spec.Data.DataTopic
+
+				// update data and data topic
+				if len(device.Spec.Data.DataProperties) > 0 || len(device.Spec.Data.DataTopic) > 0 {
+					devInst.Data = &v1alpha2.DeviceData{
+						DataProperties: device.Spec.Data.DataProperties,
+						DataTopic:      device.Spec.Data.DataTopic,
+					}
+				}
 				// update protocol
 				devInst.Protocol = deviceProtocol.Name
 				break
@@ -574,7 +562,7 @@ func (dc *DownstreamController) updateConfigMap(device *v1alpha2.Device) {
 			klog.Errorf("Failed to marshal deviceprofile: %v, error: %v", deviceProfile, err)
 			return
 		}
-		nodeConfigMap.Data[DeviceProfileJSON] = string(bytes)
+		nodeConfigMap.Data[constants.DeviceProfileJSON] = string(bytes)
 		// store new config map
 		dc.configMapManager.ConfigMap.Store(device.Spec.NodeSelector.NodeSelectorTerms[0].MatchExpressions[0].Values[0], nodeConfigMap)
 		if _, err := dc.kubeClient.CoreV1().ConfigMaps(device.Namespace).Update(context.Background(), nodeConfigMap, metav1.UpdateOptions{}); err != nil {
@@ -603,13 +591,13 @@ func (dc *DownstreamController) deviceUpdated(device *v1alpha2.Device) {
 		if isDeviceUpdated(cachedDevice, device) {
 			// if node selector updated delete from old node and create in new node
 			if isNodeSelectorUpdated(cachedDevice.Spec.NodeSelector, device.Spec.NodeSelector) {
-				dc.deviceAdded(device)
 				deletedDevice := &v1alpha2.Device{ObjectMeta: cachedDevice.ObjectMeta,
 					Spec:     cachedDevice.Spec,
 					Status:   cachedDevice.Status,
 					TypeMeta: device.TypeMeta,
 				}
 				dc.deviceDeleted(deletedDevice)
+				dc.deviceAdded(device)
 			} else {
 				// update config map if spec, data or twins changed
 				if isProtocolConfigUpdated(&cachedDevice.Spec.Protocol, &device.Spec.Protocol) ||
@@ -626,7 +614,7 @@ func (dc *DownstreamController) deviceUpdated(device *v1alpha2.Device) {
 					addDeletedTwins(cachedDevice.Status.Twins, device.Status.Twins, twin, device.ResourceVersion)
 					msg := model.NewMessage("")
 
-					resource, err := messagelayer.BuildResource(device.Spec.NodeSelector.NodeSelectorTerms[0].MatchExpressions[0].Values[0], "device/"+device.Name+"/twin/cloud_updated", "")
+					resource, err := messagelayer.BuildResourceForDevice(device.Spec.NodeSelector.NodeSelectorTerms[0].MatchExpressions[0].Values[0], "device/"+device.Name+"/twin/cloud_updated", "")
 					if err != nil {
 						klog.Warningf("Built message resource failed with error: %s", err)
 						return
@@ -641,6 +629,12 @@ func (dc *DownstreamController) deviceUpdated(device *v1alpha2.Device) {
 					if err != nil {
 						klog.Errorf("Failed to send deviceTwin message %v due to error %v", msg, err)
 					}
+				}
+				// distribute device model
+				if isDeviceStatusUpdated(&cachedDevice.Status, &device.Status) ||
+					isDeviceDataUpdated(&cachedDevice.Spec.Data, &device.Spec.Data) {
+					dc.sendDeviceModelMsg(device, model.UpdateOperation)
+					dc.sendDeviceMsg(device, model.UpdateOperation)
 				}
 			}
 		}
@@ -740,7 +734,7 @@ func (dc *DownstreamController) deleteFromConfigMap(device *v1alpha2.Device) {
 		// There are two cases we can delete configMap:
 		// 1. no device bound to it, as Data[DeviceProfileJSON] is "{}"
 		// 2. device instance created alone then removed, as Data[DeviceProfileJSON] is ""
-		if nodeConfigMap.Data[DeviceProfileJSON] == "{}" || nodeConfigMap.Data[DeviceProfileJSON] == "" {
+		if nodeConfigMap.Data[constants.DeviceProfileJSON] == "{}" || nodeConfigMap.Data[constants.DeviceProfileJSON] == "" {
 			if _, err := dc.kubeClient.CoreV1().ConfigMaps(device.Namespace).Get(context.Background(), nodeConfigMap.Name, metav1.GetOptions{}); err == nil {
 				if err = dc.kubeClient.CoreV1().ConfigMaps(device.Namespace).Delete(context.Background(), nodeConfigMap.Name, metav1.DeleteOptions{}); err != nil {
 					klog.Errorf("failed to delete config map %s in namespace %s", nodeConfigMap.Name, device.Namespace)
@@ -763,7 +757,7 @@ func (dc *DownstreamController) deleteFromConfigMap(device *v1alpha2.Device) {
 
 // deleteFromDeviceProfile deletes a device from deviceProfile
 func (dc *DownstreamController) deleteFromDeviceProfile(device *v1alpha2.Device, configMap *v1.ConfigMap) {
-	dp, ok := configMap.Data[DeviceProfileJSON]
+	dp, ok := configMap.Data[constants.DeviceProfileJSON]
 	if !ok {
 		klog.Error("Device profile does not exist in the configmap")
 		return
@@ -799,7 +793,7 @@ func (dc *DownstreamController) deleteFromDeviceProfile(device *v1alpha2.Device,
 		klog.Errorf("Failed to marshal deviceprofile: %v", deviceProfile)
 		return
 	}
-	configMap.Data[DeviceProfileJSON] = string(bytes)
+	configMap.Data[constants.DeviceProfileJSON] = string(bytes)
 }
 
 // deleteDeviceInstanceAndProtocol deletes deviceInstance and protocol from deviceProfile
@@ -837,6 +831,97 @@ func deleteDeviceModelAndVisitors(deviceModel *v1alpha2.DeviceModel, deviceProfi
 	}
 }
 
+func (dc *DownstreamController) sendDeviceMsg(device *v1alpha2.Device, operation string) {
+	device.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   v1alpha2.GroupName,
+		Version: v1alpha2.Version,
+		Kind:    constants.KindTypeDevice,
+	})
+	modelMsg := model.NewMessage("").
+		SetResourceVersion(device.ResourceVersion).
+		FillBody(device)
+	modelResource, err := messagelayer.BuildResource(
+		device.Spec.NodeSelector.NodeSelectorTerms[0].MatchExpressions[0].Values[0],
+		device.Namespace,
+		constants.ResourceTypeDevice,
+		device.Name)
+	if err != nil {
+		klog.Warningf("Built message resource failed for device, device: %s, operation: %s, error: %s", device.Name, operation, err)
+		return
+	}
+
+	// filter operation
+	switch operation {
+	case model.InsertOperation:
+	case model.DeleteOperation:
+	case model.UpdateOperation:
+	default:
+		klog.Warningf("unknown operation %s for device %s when send device msg", operation, device.Name)
+		return
+	}
+	modelMsg.BuildRouter(modules.DeviceControllerModuleName, constants.GroupResource, modelResource, operation)
+
+	err = dc.messageLayer.Send(*modelMsg)
+	if err != nil {
+		klog.Errorf("Failed to send device addition message %v, device: %s, operation: %s, error: %v",
+			modelMsg, device.Name, operation, err)
+	}
+}
+
+func (dc *DownstreamController) sendDeviceModelMsg(device *v1alpha2.Device, operation string) {
+	// send operate msg for device model
+	// now it is depended on device, maybe move this code to syncDeviceModel's method
+	if device == nil || device.Spec.DeviceModelRef == nil {
+		return
+	}
+	edgeDeviceModel, ok := dc.deviceModelManager.DeviceModel.Load(device.Spec.DeviceModelRef.Name)
+	if !ok {
+		klog.Warningf("not found device model for device: %s, operation: %s", device.Name, operation)
+		return
+	}
+
+	deviceModel, ok := edgeDeviceModel.(*v1alpha2.DeviceModel)
+	if !ok {
+		klog.Warningf("edgeDeviceModel is not *v1alpha2.DeviceModel for device: %s, operation: %s", device.Name, operation)
+		return
+	}
+
+	deviceModel.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   v1alpha2.GroupName,
+		Version: v1alpha2.Version,
+		Kind:    constants.KindTypeDeviceModel,
+	})
+	modelMsg := model.NewMessage("").
+		SetResourceVersion(deviceModel.ResourceVersion).
+		FillBody(deviceModel)
+	modelResource, err := messagelayer.BuildResource(
+		device.Spec.NodeSelector.NodeSelectorTerms[0].MatchExpressions[0].Values[0],
+		deviceModel.Namespace,
+		constants.ResourceTypeDeviceModel,
+		deviceModel.Name)
+	if err != nil {
+		klog.Warningf("Built message resource failed for device model, device: %s, operation: %s, error: %s", device.Name, operation, err)
+		return
+	}
+
+	// filter operation
+	switch operation {
+	case model.InsertOperation:
+	case model.DeleteOperation:
+	case model.UpdateOperation:
+	default:
+		klog.Warningf("unknown operation %s for device %s when send device model msg", operation, device.Name)
+		return
+	}
+	modelMsg.BuildRouter(modules.DeviceControllerModuleName, constants.GroupResource, modelResource, operation)
+
+	err = dc.messageLayer.Send(*modelMsg)
+	if err != nil {
+		klog.Errorf("Failed to send device model addition message %v, device: %s, operation: %s, error: %v",
+			modelMsg, device.Name, operation, err)
+	}
+}
+
 // deviceDeleted send a deleted message to the edgeNode and deletes the device from the deviceManager.Device map
 func (dc *DownstreamController) deviceDeleted(device *v1alpha2.Device) {
 	dc.deviceManager.Device.Delete(device.Name)
@@ -845,7 +930,7 @@ func (dc *DownstreamController) deviceDeleted(device *v1alpha2.Device) {
 	msg := model.NewMessage("")
 
 	if len(device.Spec.NodeSelector.NodeSelectorTerms) != 0 && len(device.Spec.NodeSelector.NodeSelectorTerms[0].MatchExpressions) != 0 && len(device.Spec.NodeSelector.NodeSelectorTerms[0].MatchExpressions[0].Values) != 0 {
-		resource, err := messagelayer.BuildResource(device.Spec.NodeSelector.NodeSelectorTerms[0].MatchExpressions[0].Values[0], "membership", "")
+		resource, err := messagelayer.BuildResourceForDevice(device.Spec.NodeSelector.NodeSelectorTerms[0].MatchExpressions[0].Values[0], "membership", "")
 		msg.BuildRouter(modules.DeviceControllerModuleName, constants.GroupTwin, resource, model.UpdateOperation)
 
 		content := types.MembershipUpdate{RemoveDevices: []types.Device{
@@ -862,6 +947,8 @@ func (dc *DownstreamController) deviceDeleted(device *v1alpha2.Device) {
 		if err != nil {
 			klog.Errorf("Failed to send device addition message %v due to error %v", msg, err)
 		}
+		dc.sendDeviceModelMsg(device, model.DeleteOperation)
+		dc.sendDeviceMsg(device, model.DeleteOperation)
 	}
 }
 
@@ -897,7 +984,7 @@ func NewDownstreamController(crdInformerFactory crdinformers.SharedInformerFacto
 		kubeClient:         client.GetKubeClient(),
 		deviceManager:      deviceManager,
 		deviceModelManager: deviceModelManager,
-		messageLayer:       messagelayer.NewContextMessageLayer(),
+		messageLayer:       messagelayer.DeviceControllerMessageLayer(),
 		configMapManager:   manager.NewConfigMapManager(),
 	}
 	return dc, nil

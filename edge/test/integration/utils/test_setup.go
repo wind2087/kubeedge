@@ -2,7 +2,6 @@ package utils
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"strings"
@@ -10,7 +9,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
-	edgecore "github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha1"
+	edgecore "github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha2"
 )
 
 const (
@@ -21,6 +20,19 @@ const (
 	CatEdgecoreLog        = "cat ${KUBEEDGE_ROOT}/_output/local/bin/edgecore.log"
 	DBFile                = "/tmp/edgecore/edgecore.db"
 )
+
+func CfgToFile(c *edgecore.EdgeCoreConfig) error {
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		fmt.Printf("Marshal edgecore config to yaml error %v\n", err)
+		os.Exit(1)
+	}
+	if err := os.WriteFile(EdgeCoreConfigFile, data, os.ModePerm); err != nil {
+		fmt.Printf("Create edgecore config file %v error %v\n", EdgeCoreConfigFile, err)
+		os.Exit(1)
+	}
+	return nil
+}
 
 func CreateEdgeCoreConfigFile(nodeName string) error {
 	c := edgecore.NewDefaultEdgeCoreConfig()
@@ -39,7 +51,7 @@ func CreateEdgeCoreConfigFile(nodeName string) error {
 		fmt.Printf("Marshal edgecore config to yaml error %v\n", err)
 		os.Exit(1)
 	}
-	if err := ioutil.WriteFile(EdgeCoreConfigFile, data, os.ModePerm); err != nil {
+	if err := os.WriteFile(EdgeCoreConfigFile, data, os.ModePerm); err != nil {
 		fmt.Printf("Create edgecore config file %v error %v\n", EdgeCoreConfigFile, err)
 		os.Exit(1)
 	}

@@ -29,11 +29,11 @@ func (f WithoutConversionCodecFactory) SupportedMediaTypes() []runtime.Serialize
 			MediaTypeType:    "application",
 			MediaTypeSubType: "json",
 			EncodesAsText:    true,
-			Serializer:       json.NewSerializer(json.DefaultMetaFactory, f.creator, f.typer, false),
-			PrettySerializer: json.NewSerializer(json.DefaultMetaFactory, f.creator, f.typer, true),
+			Serializer:       json.NewSerializerWithOptions(json.DefaultMetaFactory, f.creator, f.typer, json.SerializerOptions{Pretty: false}),
+			PrettySerializer: json.NewSerializerWithOptions(json.DefaultMetaFactory, f.creator, f.typer, json.SerializerOptions{Pretty: true}),
 			StreamSerializer: &runtime.StreamSerializerInfo{
 				EncodesAsText: true,
-				Serializer:    json.NewSerializer(json.DefaultMetaFactory, f.creator, f.typer, false),
+				Serializer:    json.NewSerializerWithOptions(json.DefaultMetaFactory, f.creator, f.typer, json.SerializerOptions{Pretty: false}),
 				Framer:        json.Framer,
 			},
 		},
@@ -42,7 +42,7 @@ func (f WithoutConversionCodecFactory) SupportedMediaTypes() []runtime.Serialize
 			MediaTypeType:    "application",
 			MediaTypeSubType: "yaml",
 			EncodesAsText:    true,
-			Serializer:       json.NewYAMLSerializer(json.DefaultMetaFactory, f.creator, f.typer),
+			Serializer:       json.NewSerializerWithOptions(json.DefaultMetaFactory, f.creator, f.typer, json.SerializerOptions{Yaml: true}),
 		},
 	}
 }

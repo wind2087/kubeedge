@@ -11,7 +11,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/apiserver/pkg/storage"
 	"k8s.io/klog/v2"
@@ -19,6 +18,7 @@ import (
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/common/constants"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/dbm"
+	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
 	v2 "github.com/kubeedge/kubeedge/edge/pkg/metamanager/dao/v2"
 	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/metaserver/kubernetes/storage/sqlite/imitator/watchhook"
 	"github.com/kubeedge/kubeedge/pkg/metaserver"
@@ -45,10 +45,8 @@ func (s *imitator) Inject(msg model.Message) {
 		switch e.Type {
 		case watch.Added, watch.Modified:
 			err = s.InsertOrUpdateObj(context.TODO(), e.Object)
-			utilruntime.Must(err)
 		case watch.Deleted:
 			err = s.DeleteObj(context.TODO(), e.Object)
-			utilruntime.Must(err)
 		}
 		if err != nil {
 			key := metaserver.KeyFunc(e.Object)
@@ -63,15 +61,19 @@ func (s *imitator) Inject(msg model.Message) {
 //TODO: filter out insert or update req that the obj's rev is smaller than the stored
 func (s *imitator) InsertOrUpdateObj(ctx context.Context, obj runtime.Object) error {
 	key, err := metaserver.KeyFuncObj(obj)
-	utilruntime.Must(err)
+	if err != nil {
+		return err
+	}
 	gvr, ns, name := metaserver.ParseKey(key)
 	unstr, isUnstr := obj.(*unstructured.Unstructured)
 	if !isUnstr {
-		return fmt.Errorf("obj is not unstructrued type")
+		return fmt.Errorf("obj is not unstructured type")
 	}
 	buf := bytes.NewBuffer(nil)
 	err = s.codec.Encode(unstr, buf)
-	utilruntime.Must(err)
+	if err != nil {
+		return err
+	}
 	objRv, err := s.versioner.ObjectResourceVersion(obj)
 	m := v2.MetaV2{
 		Key:                  key,
@@ -82,7 +84,7 @@ func (s *imitator) InsertOrUpdateObj(ctx context.Context, obj runtime.Object) er
 		Value:                buf.String(),
 	}
 	s.lock.Lock()
-	//_, err = dbm.DBAccess.Insert(&m)
+	defer s.lock.Unlock()
 	_, err = dbm.DBAccess.Raw("INSERT OR REPLACE INTO meta_v2 (key, groupversionresource, namespace,name,resourceversion,value) VALUES (?,?,?,?,?,?)", m.Key, m.GroupVersionResource, m.Namespace, m.Name, m.ResourceVersion, m.Value).Exec()
 	var maxRetryTimes = 3
 	for i := 1; err != nil; i++ {
@@ -95,7 +97,6 @@ func (s *imitator) InsertOrUpdateObj(ctx context.Context, obj runtime.Object) er
 	if objRv > s.GetRevision() {
 		s.SetRevision(objRv)
 	}
-	s.lock.Unlock()
 	klog.V(4).Infof("[metaserver]successfully insert or update obj:%v", key)
 	return nil
 }
@@ -105,16 +106,19 @@ func (s *imitator) Delete(ctx context.Context, key string) error {
 	}
 	s.lock.Lock()
 	_, err := dbm.DBAccess.Delete(&m)
-	klog.Errorf("[imitator] delete error: %v", err)
+	if err != nil {
+		klog.Errorf("[imitator] delete error: %v", err)
+	}
 	s.lock.Unlock()
 	return nil
 }
 func (s *imitator) DeleteObj(ctx context.Context, obj runtime.Object) error {
 	key, err := metaserver.KeyFuncObj(obj)
-	utilruntime.Must(err)
+	if err != nil {
+		return err
+	}
 	err = s.Delete(context.TODO(), key)
-	utilruntime.Must(err)
-	return nil
+	return err
 }
 func (s *imitator) Get(ctx context.Context, key string) (Resp, error) {
 	var resp Resp
@@ -177,10 +181,16 @@ func (s *imitator) SetRevision(version interface{}) {
 func (s *imitator) Watch(ctx context.Context, key string, rev uint64) <-chan watch.Event {
 	wch := make(chan watch.Event)
 	receiver := watchhook.NewChanReceiver(wch)
-	wh := watchhook.NewWatchHook(key, rev, receiver)
+	wh, err := watchhook.NewWatchHook(key, rev, receiver)
+	if err != nil {
+		klog.Errorf("add hook for %s failed, %v", key, err)
+		return nil
+	}
+
 	go func() {
 		<-ctx.Done()
 		wh.Stop()
+		close(wch)
 	}()
 	return wch
 }
@@ -188,10 +198,11 @@ func (s *imitator) Watch(ctx context.Context, key string, rev uint64) <-chan wat
 // Event transform the message to watch.event
 func (s *imitator) Event(msg *model.Message) []watch.Event {
 	klog.V(4).Infof("[metaserver] get a message from metamanager: %+v", msg)
+	var ret []watch.Event
 	_, resType, _ := parseResource(msg.Router.Resource)
-	//skip nodestatus and podstatus
-	if strings.Contains(resType, "status") {
-		klog.V(4).Infof("skip status messages")
+	//skip nodestatus, podstatus and node-lease
+	if strings.Contains(resType, "status") || (strings.Contains(resType, "lease") && msg.GetSource() == modules.EdgedModuleName) {
+		klog.V(4).Infof("skip status or node-lease messages")
 		return []watch.Event{}
 	}
 	var bytes []byte
@@ -203,7 +214,10 @@ func (s *imitator) Event(msg *model.Message) []watch.Event {
 		bytes = body
 	default:
 		bytes, err = json.Marshal(body)
-		utilruntime.Must(err)
+		if err != nil {
+			klog.Errorf("failed to marshal msg content, err: %+v", err)
+			return ret
+		}
 	}
 	var op watch.EventType
 	switch msg.Router.Operation {
@@ -215,7 +229,6 @@ func (s *imitator) Event(msg *model.Message) []watch.Event {
 		op = watch.Deleted
 	}
 	//TODO: support array List like []obj
-	var ret []watch.Event
 	obj := new(unstructured.Unstructured)
 	err = runtime.DecodeInto(s.codec, bytes, obj)
 	if err != nil {
@@ -232,7 +245,10 @@ func (s *imitator) Event(msg *model.Message) []watch.Event {
 			return nil
 		}
 		err := obj.EachListItem(fn)
-		utilruntime.Must(err)
+		if err != nil {
+			klog.Errorf("failed to get ret list, err: %+v", err)
+			return ret
+		}
 	} else {
 		ret = append(ret, watch.Event{Type: op, Object: obj})
 	}

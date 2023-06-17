@@ -17,17 +17,16 @@ limitations under the License.
 package manager
 
 import (
-	"io/ioutil"
 	"os"
 	"reflect"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/client"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/informers"
-	"github.com/kubeedge/kubeedge/cloud/pkg/edgecontroller/config"
 	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/cloudcore/v1alpha1"
 )
 
@@ -66,16 +65,12 @@ func TestNewNodesManager(t *testing.T) {
 		informer cache.SharedIndexInformer
 	}
 
-	config.Config.Buffer = &v1alpha1.EdgeControllerBuffer{
-		ConfigMapEvent: 1024,
-	}
-
-	tmpfile, err := ioutil.TempFile("", "kubeconfig")
+	tmpfile, err := os.CreateTemp("", "kubeconfig")
 	if err != nil {
 		t.Error(err)
 	}
 	defer os.Remove(tmpfile.Name())
-	if err := ioutil.WriteFile(tmpfile.Name(), []byte(mockKubeConfigContent), 0666); err != nil {
+	if err := os.WriteFile(tmpfile.Name(), []byte(mockKubeConfigContent), 0666); err != nil {
 		t.Error(err)
 	}
 	client.InitKubeEdgeClient(&v1alpha1.KubeAPIConfig{
@@ -84,6 +79,8 @@ func TestNewNodesManager(t *testing.T) {
 		Burst:       200,
 		ContentType: "application/vnd.kubernetes.protobuf",
 	})
+
+	client.DefaultGetRestMapper = func() (mapper meta.RESTMapper, err error) { return nil, nil }
 
 	tests := []struct {
 		name string

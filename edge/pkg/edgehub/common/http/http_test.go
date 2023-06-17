@@ -21,8 +21,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"io"
-	"io/ioutil"
 	"net/http"
+	"os"
 	"reflect"
 	"testing"
 
@@ -50,12 +50,12 @@ func TestNewHttpClient(t *testing.T) {
 func TestNewHTTPSClient(t *testing.T) {
 	err := util.GenerateTestCertificate(Path, BaseName, BaseName)
 	if err != nil {
-		t.Errorf("Error in generating fake certificates: %w", err)
+		t.Errorf("Error in generating fake certificates: %v", err)
 		return
 	}
 	certificate, err := tls.LoadX509KeyPair(CertFile, KeyFile)
 	if err != nil {
-		t.Errorf("Error in loading key pair: %w", err)
+		t.Errorf("Error in loading key pair: %v", err)
 		return
 	}
 	type args struct {
@@ -117,12 +117,12 @@ func TestNewHTTPSClient(t *testing.T) {
 func TestNewHTTPClientWithCA(t *testing.T) {
 	err := util.GenerateTestCertificate(Path, BaseName, BaseName)
 	if err != nil {
-		t.Errorf("Error in generating fake certificates: %w", err)
+		t.Errorf("Error in generating fake certificates: %v", err)
 		return
 	}
-	capem, err := ioutil.ReadFile(CertFile)
+	capem, err := os.ReadFile(CertFile)
 	if err != nil {
-		t.Errorf("Error in loading Cert file: %w", err)
+		t.Errorf("Error in loading Cert file: %v", err)
 		return
 	}
 	certificate := tls.Certificate{}
@@ -162,7 +162,7 @@ func TestNewHTTPClientWithCA(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "Wrong certifcate given when getting HTTP client",
+			name: "Wrong certificate given when getting HTTP client",
 			args: args{
 				capem:       []byte{},
 				certificate: certificate,
@@ -175,11 +175,25 @@ func TestNewHTTPClientWithCA(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := NewHTTPClientWithCA(tt.args.capem, tt.args.certificate)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("NewHTTPClientWithCA() error = %w, expectedError = %v", err, tt.wantErr)
+				t.Errorf("NewHTTPClientWithCA() error = %v, expectedError = %v", err, tt.wantErr)
 				return
 			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("NewHTTPClientWithCA() = %v, want %v", got, tt.want)
+			if got != nil && tt.want != nil {
+				//due to x509.CertPool cannot be checked equal using reflect.DeepEqual, so need to check whether equal as below
+				//ref: https://github.com/golang/go/issues/46057
+				gotTransport := got.Transport.(*http.Transport)
+				wantTransport := tt.want.Transport.(*http.Transport)
+				isEqual := reflect.DeepEqual(gotTransport.TLSClientConfig.RootCAs.Subjects(), wantTransport.TLSClientConfig.RootCAs.Subjects()) &&
+					(gotTransport.TLSClientConfig.InsecureSkipVerify == wantTransport.TLSClientConfig.InsecureSkipVerify) &&
+					reflect.DeepEqual(gotTransport.TLSClientConfig.Certificates, wantTransport.TLSClientConfig.Certificates) &&
+					got.Timeout == tt.want.Timeout
+				if !isEqual {
+					t.Errorf("NewHTTPClientWithCA() = %v, want %v", got, tt.want)
+				}
+			} else {
+				if !reflect.DeepEqual(got, tt.want) {
+					t.Errorf("NewHTTPClientWithCA() = %v, want %v", got, tt.want)
+				}
 			}
 		})
 	}
@@ -193,7 +207,7 @@ func TestBuildRequest(t *testing.T) {
 
 	req, err := http.NewRequest(Method, URL, reader)
 	if err != nil {
-		t.Errorf("Error in creating new http request message: %w", err)
+		t.Errorf("Error in creating new http request message: %v", err)
 		return
 	}
 	req.Header.Add("Authorization", "Bearer "+token)
@@ -241,11 +255,11 @@ func TestBuildRequest(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := BuildRequest(tt.args.method, tt.args.urlStr, tt.args.body, tt.args.token, tt.args.nodeName)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("BuildRequest() error = %w, expectedError = %v", err, tt.wantErr)
+				t.Errorf("BuildRequest() error = %v, expectedError = %v", err, tt.wantErr)
 				return
 			}
 			//needed to handle failure testcase because can't deep compare field in nil
-			if got == tt.want && err != nil && tt.wantErr == true {
+			if got == tt.want && err != nil && tt.wantErr {
 				return
 			}
 			if !reflect.DeepEqual(got.Header, tt.want.Header) {
@@ -267,12 +281,15 @@ func TestSendRequestFailure(t *testing.T) {
 
 	req, err := http.NewRequest(Method, URL, bytes.NewReader([]byte{}))
 	if err != nil {
-		t.Errorf("Error in creating new http request message: %w", err)
+		t.Errorf("Error in creating new http request message: %v", err)
 		return
 	}
 
 	resp, respErr := SendRequest(req, httpClient)
 	if resp != nil && respErr == nil {
 		t.Errorf("Error, response should not come as data is not valid")
+	}
+	if respErr == nil {
+		_ = resp.Body.Close()
 	}
 }

@@ -9,7 +9,6 @@ import (
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/message"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
-	"github.com/kubeedge/kubeedge/edge/pkg/metamanager"
 )
 
 // ConfigMapsGetter has a method to return a ConfigMapInterface.
@@ -57,19 +56,16 @@ func (c *configMaps) Get(name string) (*api.ConfigMap, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get configmap from metaManager failed, err: %v", err)
 	}
-
-	var content []byte
-	switch msg.Content.(type) {
-	case []byte:
-		content = msg.GetContent().([]byte)
-	default:
-		content, err = json.Marshal(msg.Content)
-		if err != nil {
-			return nil, fmt.Errorf("marshal message to configmap failed, err: %v", err)
-		}
+	errContent, ok := msg.GetContent().(error)
+	if ok {
+		return nil, errContent
+	}
+	content, err := msg.GetContentData()
+	if err != nil {
+		return nil, fmt.Errorf("parse message to configmap failed, err: %v", err)
 	}
 
-	if msg.GetOperation() == model.ResponseOperation && msg.GetSource() == metamanager.MetaManagerModuleName {
+	if msg.GetOperation() == model.ResponseOperation && msg.GetSource() == modules.MetaManagerModuleName {
 		return handleConfigMapFromMetaDB(content)
 	}
 	return handleConfigMapFromMetaManager(content)
@@ -77,7 +73,7 @@ func (c *configMaps) Get(name string) (*api.ConfigMap, error) {
 
 func handleConfigMapFromMetaDB(content []byte) (*api.ConfigMap, error) {
 	var lists []string
-	err := json.Unmarshal([]byte(content), &lists)
+	err := json.Unmarshal(content, &lists)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshal message to ConfigMap list from db failed, err: %v", err)
 	}

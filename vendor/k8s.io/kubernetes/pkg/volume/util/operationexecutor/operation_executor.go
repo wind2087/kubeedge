@@ -21,11 +21,12 @@ limitations under the License.
 package operationexecutor
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	"k8s.io/klog/v2"
-	"k8s.io/utils/mount"
+	"k8s.io/mount-utils"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -141,6 +142,9 @@ type OperationExecutor interface {
 	// IsOperationPending returns true if an operation for the given volumeName
 	// and one of podName or nodeName is pending, otherwise it returns false
 	IsOperationPending(volumeName v1.UniqueVolumeName, podName volumetypes.UniquePodName, nodeName types.NodeName) bool
+	// IsOperationSafeToRetry returns false if an operation for the given volumeName
+	// and one of podName or nodeName is pending or in exponential backoff, otherwise it returns true
+	IsOperationSafeToRetry(volumeName v1.UniqueVolumeName, podName volumetypes.UniquePodName, nodeName types.NodeName, operationName string) bool
 	// ExpandInUseVolume will resize volume's file system to expected size without unmounting the volume.
 	ExpandInUseVolume(volumeToMount VolumeToMount, actualStateOfWorld ActualStateOfWorldMounterUpdater) error
 	// ReconstructVolumeOperation construct a new volumeSpec and returns it created by plugin
@@ -203,9 +207,29 @@ type ActualStateOfWorldMounterUpdater interface {
 	// GetVolumeMountState returns mount state of the volume for the Pod
 	GetVolumeMountState(volumName v1.UniqueVolumeName, podName volumetypes.UniquePodName) VolumeMountState
 
+	// IsVolumeMountedElsewhere returns whether the supplied volume is mounted in a Pod other than the supplied one
+	IsVolumeMountedElsewhere(volumeName v1.UniqueVolumeName, podName volumetypes.UniquePodName) bool
+
 	// MarkForInUseExpansionError marks the volume to have in-use error during expansion.
 	// volume expansion must not be retried for this volume
 	MarkForInUseExpansionError(volumeName v1.UniqueVolumeName)
+
+	// CheckAndMarkVolumeAsUncertainViaReconstruction only adds volume to actual state of the world
+	// if volume was not already there. This avoid overwriting in any previously stored
+	// state. It returns error if there was an error adding the volume to ASOW.
+	// It returns true, if this operation resulted in volume being added to ASOW
+	// otherwise it returns false.
+	CheckAndMarkVolumeAsUncertainViaReconstruction(opts MarkVolumeOpts) (bool, error)
+
+	// CheckAndMarkDeviceUncertainViaReconstruction only adds device to actual state of the world
+	// if device was not already there. This avoids overwriting in any previously stored
+	// state. We only supply deviceMountPath because devicePath is already determined from
+	// VerifyControllerAttachedVolume function.
+	CheckAndMarkDeviceUncertainViaReconstruction(volumeName v1.UniqueVolumeName, deviceMountPath string) bool
+
+	// IsVolumeReconstructed returns true if volume currently added to actual state of the world
+	// was found during reconstruction.
+	IsVolumeReconstructed(volumeName v1.UniqueVolumeName, podName volumetypes.UniquePodName) bool
 }
 
 // ActualStateOfWorldAttacherUpdater defines a set of operations updating the
@@ -411,6 +435,23 @@ const (
 	// VolumeNotMounted means volume has not be mounted in pod's local path
 	VolumeNotMounted VolumeMountState = "VolumeNotMounted"
 )
+
+type MountPreConditionFailed struct {
+	msg string
+}
+
+func (err *MountPreConditionFailed) Error() string {
+	return err.msg
+}
+
+func NewMountPreConditionFailedError(msg string) *MountPreConditionFailed {
+	return &MountPreConditionFailed{msg: msg}
+}
+
+func IsMountFailedPreconditionError(err error) bool {
+	var failedPreconditionError *MountPreConditionFailed
+	return errors.As(err, &failedPreconditionError)
+}
 
 // GenerateMsgDetailed returns detailed msgs for volumes to mount
 func (volume *VolumeToMount) GenerateMsgDetailed(prefixMsg, suffixMsg string) (detailedMsg string) {
@@ -661,6 +702,14 @@ func (oe *operationExecutor) IsOperationPending(
 	return oe.pendingOperations.IsOperationPending(volumeName, podName, nodeName)
 }
 
+func (oe *operationExecutor) IsOperationSafeToRetry(
+	volumeName v1.UniqueVolumeName,
+	podName volumetypes.UniquePodName,
+	nodeName types.NodeName,
+	operationName string) bool {
+	return oe.pendingOperations.IsOperationSafeToRetry(volumeName, podName, nodeName, operationName)
+}
+
 func (oe *operationExecutor) AttachVolume(
 	volumeToAttach VolumeToAttach,
 	actualStateOfWorld ActualStateOfWorldAttacherUpdater) error {
@@ -704,6 +753,7 @@ func (oe *operationExecutor) VerifyVolumesAreAttached(
 	volumeSpecMapByPlugin := make(map[string]map[*volume.Spec]v1.UniqueVolumeName)
 
 	for node, nodeAttachedVolumes := range attachedVolumes {
+		needIndividualVerifyVolumes := []AttachedVolume{}
 		for _, volumeAttached := range nodeAttachedVolumes {
 			if volumeAttached.VolumeSpec == nil {
 				klog.Errorf("VerifyVolumesAreAttached: nil spec for volume %s", volumeAttached.VolumeName)
@@ -757,12 +807,12 @@ func (oe *operationExecutor) VerifyVolumesAreAttached(
 				volumeSpecMapByPlugin[pluginName] = volumeSpecMap
 				continue
 			}
-
 			// If node doesn't support Bulk volume polling it is best to poll individually
-			nodeError := oe.VerifyVolumesAreAttachedPerNode(nodeAttachedVolumes, node, actualStateOfWorld)
-			if nodeError != nil {
-				klog.Errorf("VerifyVolumesAreAttached failed for volumes %v, node %q with error %v", nodeAttachedVolumes, node, nodeError)
-			}
+			needIndividualVerifyVolumes = append(needIndividualVerifyVolumes, volumeAttached)
+		}
+		nodeError := oe.VerifyVolumesAreAttachedPerNode(needIndividualVerifyVolumes, node, actualStateOfWorld)
+		if nodeError != nil {
+			klog.Errorf("VerifyVolumesAreAttached failed for volumes %v, node %q with error %v", needIndividualVerifyVolumes, node, nodeError)
 		}
 	}
 
@@ -938,7 +988,7 @@ func (oe *operationExecutor) ReconstructVolumeOperation(
 	// Filesystem Volume case
 	if volumeMode == v1.PersistentVolumeFilesystem {
 		// Create volumeSpec from mount path
-		klog.V(5).Infof("Starting operationExecutor.ReconstructVolumepodName")
+		klog.V(5).Infof("Starting operationExecutor.ReconstructVolume for file volume on pod %q", podName)
 		volumeSpec, err := plugin.ConstructVolumeSpec(volumeSpecName, volumePath)
 		if err != nil {
 			return nil, err
@@ -948,7 +998,7 @@ func (oe *operationExecutor) ReconstructVolumeOperation(
 
 	// Block Volume case
 	// Create volumeSpec from mount path
-	klog.V(5).Infof("Starting operationExecutor.ReconstructVolume")
+	klog.V(5).Infof("Starting operationExecutor.ReconstructVolume for block volume on pod %q", podName)
 
 	// volumePath contains volumeName on the path. In the case of block volume, {volumeName} is symbolic link
 	// corresponding to raw block device.
@@ -984,8 +1034,8 @@ func (oe *operationExecutor) CheckVolumeExistenceOperation(
 			if mounter == nil {
 				return false, fmt.Errorf("mounter was not set for a filesystem volume")
 			}
-			if isNotMount, mountCheckErr = mounter.IsLikelyNotMountPoint(mountPath); mountCheckErr != nil {
-				return false, fmt.Errorf("Could not check whether the volume %q (spec.Name: %q) pod %q (UID: %q) is mounted with: %v",
+			if isNotMount, mountCheckErr = mount.IsNotMountPoint(mounter, mountPath); mountCheckErr != nil {
+				return false, fmt.Errorf("could not check whether the volume %q (spec.Name: %q) pod %q (UID: %q) is mounted with: %v",
 					uniqueVolumeName,
 					volumeName,
 					podName,
@@ -1008,7 +1058,7 @@ func (oe *operationExecutor) CheckVolumeExistenceOperation(
 	var islinkExist bool
 	var checkErr error
 	if islinkExist, checkErr = blkutil.IsSymlinkExist(mountPath); checkErr != nil {
-		return false, fmt.Errorf("Could not check whether the block volume %q (spec.Name: %q) pod %q (UID: %q) is mapped to: %v",
+		return false, fmt.Errorf("could not check whether the block volume %q (spec.Name: %q) pod %q (UID: %q) is mapped to: %v",
 			uniqueVolumeName,
 			volumeName,
 			podName,

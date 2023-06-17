@@ -2,12 +2,15 @@ package conn
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
+	"github.com/lucas-clemente/quic-go"
 	"k8s.io/klog/v2"
 
 	"github.com/kubeedge/beehive/pkg/core/model"
@@ -18,7 +21,6 @@ import (
 	"github.com/kubeedge/viaduct/pkg/lane"
 	"github.com/kubeedge/viaduct/pkg/mux"
 	"github.com/kubeedge/viaduct/pkg/smgr"
-	"github.com/lucas-clemente/quic-go"
 )
 
 var (
@@ -26,41 +28,48 @@ var (
 	autoFree = false
 )
 
-// the connection based on quic protocol
+// QuicConnection the connection based on quic protocol
 type QuicConnection struct {
-	writeDeadline time.Time
-	readDeadline  time.Time
-	session       smgr.Session
-	handler       mux.Handler
-	ctrlLan       lane.Lane
-	state         *ConnectionState
-	streamManager *smgr.StreamManager
-	consumer      io.Writer
-	connUse       api.UseType
-	syncKeeper    *keeper.SyncKeeper
-	messageFifo   *fifo.MessageFifo
-	autoRoute     bool
+	writeDeadline      time.Time
+	readDeadline       time.Time
+	session            smgr.Session
+	handler            mux.Handler
+	ctrlLan            lane.Lane
+	state              *ConnectionState
+	streamManager      *smgr.StreamManager
+	consumer           io.Writer
+	connUse            api.UseType
+	syncKeeper         *keeper.SyncKeeper
+	messageFifo        *fifo.MessageFifo
+	autoRoute          bool
+	OnReadTransportErr func(nodeID, projectID string)
+	locker             sync.Mutex
 }
 
-// new quic connection
+// NewQuicConn new quic connection
 func NewQuicConn(options *ConnectionOptions) *QuicConnection {
 	quicSession := options.Base.(quic.Session)
 	return &QuicConnection{
-		session:       smgr.Session{quicSession},
-		handler:       options.Handler,
-		ctrlLan:       options.CtrlLane.(lane.Lane),
-		state:         options.State,
-		connUse:       options.ConnUse,
-		syncKeeper:    keeper.NewSyncKeeper(),
-		consumer:      options.Consumer,
-		autoRoute:     options.AutoRoute,
-		messageFifo:   fifo.NewMessageFifo(),
-		streamManager: smgr.NewStreamManager(smgr.NumStreamsMax, autoFree, quicSession),
+		session:            smgr.Session{Sess: quicSession},
+		handler:            options.Handler,
+		ctrlLan:            options.CtrlLane.(lane.Lane),
+		state:              options.State,
+		connUse:            options.ConnUse,
+		syncKeeper:         keeper.NewSyncKeeper(),
+		consumer:           options.Consumer,
+		autoRoute:          options.AutoRoute,
+		messageFifo:        fifo.NewMessageFifo(),
+		OnReadTransportErr: options.OnReadTransportErr,
+		streamManager:      smgr.NewStreamManager(smgr.NumStreamsMax, autoFree, quicSession),
 	}
 }
 
 // process header message
 func (conn *QuicConnection) headerMessage(msg *model.Message) error {
+	if msg == nil {
+		klog.Errorf("nil message error")
+		return fmt.Errorf("nil message error")
+	}
 	headers := make(http.Header)
 	err := json.Unmarshal(msg.GetContent().([]byte), &headers)
 	if err != nil {
@@ -68,16 +77,6 @@ func (conn *QuicConnection) headerMessage(msg *model.Message) error {
 		return err
 	}
 	conn.state.Headers = headers
-	return nil
-}
-
-// process control messages
-func (conn *QuicConnection) processControlMessage(msg *model.Message) error {
-	switch msg.GetOperation() {
-	case comm.ControlTypeConfig:
-	case comm.ControlTypePing:
-	case comm.ControlTypePong:
-	}
 	return nil
 }
 
@@ -92,15 +91,8 @@ func (conn *QuicConnection) serveControlLan() {
 			return
 		}
 
-		// process control message
-		result := comm.RespTypeAck
-		err = conn.processControlMessage(&msg)
-		if err != nil {
-			result = comm.RespTypeNack
-		}
-
 		// feedback the response
-		resp := msg.NewRespByMessage(&msg, result)
+		resp := msg.NewRespByMessage(&msg, comm.RespTypeAck)
 		err = conn.ctrlLan.WriteMessage(resp)
 		if err != nil {
 			klog.Errorf("failed to send response back, error:%+v", err)
@@ -119,7 +111,13 @@ func (conn *QuicConnection) serveSession() {
 			klog.Warningf("accept stream error(%+v) or the session has been closed",
 				err)
 			// close local session
-			conn.Close()
+			_ = conn.Close()
+
+			if conn.OnReadTransportErr != nil {
+				conn.OnReadTransportErr(conn.state.Headers.Get("node_id"),
+					conn.state.Headers.Get("project_id"))
+			}
+
 			return
 		}
 		conn.streamManager.AddStream(stream)
@@ -187,6 +185,9 @@ func (conn *QuicConnection) acceptStream(streamUse api.UseType, autoDispatch boo
 
 // Write write raw data into stream
 func (conn *QuicConnection) Write(raw []byte) (int, error) {
+	conn.locker.Lock()
+	defer conn.locker.Unlock()
+
 	stream, err := conn.streamManager.GetStream(api.UseTypeStream, false, conn.openStreamSync)
 	if err != nil {
 		klog.Errorf("failed to acquire stream sync, error:%+v", err)
@@ -219,7 +220,7 @@ func (conn *QuicConnection) handleMessage(stream *smgr.Stream) {
 	for {
 		err := lane.NewLane(api.ProtocolTypeQuic, stream.Stream).ReadMessage(msg)
 		if err != nil {
-			if err != io.EOF {
+			if !errors.Is(err, io.EOF) {
 				klog.Errorf("failed to read message, error: %+v", err)
 			}
 			conn.streamManager.FreeStream(stream)
@@ -268,6 +269,9 @@ func (conn *QuicConnection) WriteMessageSync(msg *model.Message) (*model.Message
 		return nil, fmt.Errorf("bad connection session")
 	}
 
+	conn.locker.Lock()
+	defer conn.locker.Unlock()
+
 	stream, err := conn.streamManager.GetStream(api.UseTypeMessage, true, conn.openStreamSync)
 	if err != nil {
 		klog.Errorf("failed to acquire stream sync, error:%+v", err)
@@ -276,7 +280,7 @@ func (conn *QuicConnection) WriteMessageSync(msg *model.Message) (*model.Message
 	defer conn.streamManager.ReleaseStream(api.UseTypeMessage, stream)
 
 	lane := lane.NewLane(api.ProtocolTypeQuic, stream)
-	lane.SetWriteDeadline(conn.writeDeadline)
+	_ = lane.SetWriteDeadline(conn.writeDeadline)
 	msg.Header.Sync = true
 	err = lane.WriteMessage(msg)
 	if err != nil {
@@ -295,6 +299,9 @@ func (conn *QuicConnection) WriteMessageAsync(msg *model.Message) error {
 		return fmt.Errorf("bad connection session")
 	}
 
+	conn.locker.Lock()
+	defer conn.locker.Unlock()
+
 	stream, err := conn.streamManager.GetStream(api.UseTypeMessage, true, conn.openStreamSync)
 	if err != nil {
 		klog.Errorf("failed to acquire stream sync, error:%+v", err)
@@ -303,8 +310,9 @@ func (conn *QuicConnection) WriteMessageAsync(msg *model.Message) error {
 	defer conn.streamManager.ReleaseStream(api.UseTypeMessage, stream)
 
 	lane := lane.NewLane(api.ProtocolTypeQuic, stream)
-	lane.SetWriteDeadline(conn.writeDeadline)
+	_ = lane.SetWriteDeadline(conn.writeDeadline)
 	msg.Header.Sync = false
+
 	return lane.WriteMessage(msg)
 }
 

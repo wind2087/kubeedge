@@ -48,13 +48,12 @@ func Infof(format string, args ...interface{}) {
 
 //Function to print the test case name and status of execution
 func PrintTestcaseNameandStatus() {
-	var testdesc ginkgo.GinkgoTestDescription
 	var Status string
-	testdesc = ginkgo.CurrentGinkgoTestDescription()
-	if testdesc.Failed {
+	testSpecReport := ginkgo.CurrentGinkgoTestDescription()
+	if testSpecReport.Failed {
 		Status = "FAILED"
 	} else {
 		Status = "PASSED"
 	}
-	Infof("TestCase:%40s     Status=%s", testdesc.TestText, Status)
+	Infof("TestCase:%40s     Status=%s", testSpecReport.TestText, Status)
 }

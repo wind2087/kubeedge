@@ -43,24 +43,22 @@ func StartServer(address string) {
 
 	klog.Info("start unix domain socket server")
 	if err := uds.StartServer(); err != nil {
-		klog.Fatalf("failed to start uds server: %v", err)
+		klog.Exitf("failed to start uds server: %v", err)
 		return
 	}
 }
 
 // ExtractMessage extracts message from clients
 func ExtractMessage(context string) (*model.Message, error) {
+	var msg model.Message
 	if context == "" {
-		return nil, errors.New("failed with error: context is empty")
+		return &msg, errors.New("failed with error: context is empty")
 	}
-
-	var msg *model.Message
 	err := json.Unmarshal([]byte(context), &msg)
 	if err != nil {
-		return nil, err
+		return &msg, err
 	}
-
-	return msg, nil
+	return &msg, nil
 }
 
 // feedbackError sends back error message

@@ -20,20 +20,29 @@ import (
 	"os"
 	"sync"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 
-	crdClientset "github.com/kubeedge/kubeedge/cloud/pkg/client/clientset/versioned"
 	cloudcoreConfig "github.com/kubeedge/kubeedge/pkg/apis/componentconfig/cloudcore/v1alpha1"
+	crdClientset "github.com/kubeedge/kubeedge/pkg/client/clientset/versioned"
 )
 
 var (
-	initOnce sync.Once
-	keClient *kubeEdgeClient
+	initOnce      sync.Once
+	kubeClient    kubernetes.Interface
+	crdClient     crdClientset.Interface
+	dynamicClient dynamic.Interface
+	// authKubeConfig only contains master address and CA cert when init, it is used for
+	// generating a temporary kubeclient and validating user token once receive an application message.
+	authKubeConfig *rest.Config
+
+	KubeConfig *rest.Config
 )
 
 func InitKubeEdgeClient(config *cloudcoreConfig.KubeAPIConfig) {
@@ -43,41 +52,51 @@ func InitKubeEdgeClient(config *cloudcoreConfig.KubeAPIConfig) {
 			klog.Errorf("Failed to build config, err: %v", err)
 			os.Exit(1)
 		}
-
 		kubeConfig.QPS = float32(config.QPS)
 		kubeConfig.Burst = int(config.Burst)
 
-		dynamicClient := dynamic.NewForConfigOrDie(kubeConfig)
+		KubeConfig = kubeConfig
+
+		dynamicClient = dynamic.NewForConfigOrDie(kubeConfig)
 
 		kubeConfig.ContentType = runtime.ContentTypeProtobuf
-		kubeClient := kubernetes.NewForConfigOrDie(kubeConfig)
+		kubeClient = kubernetes.NewForConfigOrDie(kubeConfig)
 
 		crdKubeConfig := rest.CopyConfig(kubeConfig)
 		crdKubeConfig.ContentType = runtime.ContentTypeJSON
-		crdClient := crdClientset.NewForConfigOrDie(crdKubeConfig)
+		crdClient = crdClientset.NewForConfigOrDie(crdKubeConfig)
 
-		keClient = &kubeEdgeClient{
-			kubeClient:    kubeClient,
-			crdClient:     crdClient,
-			dynamicClient: dynamicClient,
+		authKubeConfig, err = clientcmd.BuildConfigFromFlags(kubeConfig.Host, "")
+		if err != nil {
+			klog.Errorf("Failed to build config, err: %v", err)
+			os.Exit(1)
 		}
+		authKubeConfig.CAData = kubeConfig.CAData
+		authKubeConfig.CAFile = kubeConfig.CAFile
+		authKubeConfig.ContentType = runtime.ContentTypeJSON
 	})
 }
 
 func GetKubeClient() kubernetes.Interface {
-	return keClient.kubeClient
+	return kubeClient
 }
 
 func GetCRDClient() crdClientset.Interface {
-	return keClient.crdClient
+	return crdClient
 }
 
 func GetDynamicClient() dynamic.Interface {
-	return keClient.dynamicClient
+	return dynamicClient
 }
 
-type kubeEdgeClient struct {
-	kubeClient    *kubernetes.Clientset
-	crdClient     *crdClientset.Clientset
-	dynamicClient dynamic.Interface
+func GetAuthConfig() *rest.Config {
+	return authKubeConfig
+}
+
+type RestMapperFunc func() (meta.RESTMapper, error)
+
+var DefaultGetRestMapper RestMapperFunc = GetRestMapper
+
+func GetRestMapper() (meta.RESTMapper, error) {
+	return apiutil.NewDynamicRESTMapper(KubeConfig)
 }

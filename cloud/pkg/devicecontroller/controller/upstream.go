@@ -25,14 +25,15 @@ import (
 
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
-	"github.com/kubeedge/kubeedge/cloud/pkg/apis/devices/v1alpha2"
-	crdClientset "github.com/kubeedge/kubeedge/cloud/pkg/client/clientset/versioned"
 	keclient "github.com/kubeedge/kubeedge/cloud/pkg/common/client"
+	"github.com/kubeedge/kubeedge/cloud/pkg/common/messagelayer"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
 	"github.com/kubeedge/kubeedge/cloud/pkg/devicecontroller/config"
 	"github.com/kubeedge/kubeedge/cloud/pkg/devicecontroller/constants"
-	"github.com/kubeedge/kubeedge/cloud/pkg/devicecontroller/messagelayer"
 	"github.com/kubeedge/kubeedge/cloud/pkg/devicecontroller/types"
+	commonconst "github.com/kubeedge/kubeedge/common/constants"
+	"github.com/kubeedge/kubeedge/pkg/apis/devices/v1alpha2"
+	crdClientset "github.com/kubeedge/kubeedge/pkg/client/clientset/versioned"
 )
 
 // DeviceStatus is structure to patch device status
@@ -65,7 +66,7 @@ func (uc *UpstreamController) Start() error {
 	uc.deviceStatusChan = make(chan model.Message, config.Config.Buffer.UpdateDeviceStatus)
 	go uc.dispatchMessage()
 
-	for i := 0; i < int(config.Config.Buffer.UpdateDeviceStatus); i++ {
+	for i := 0; i < int(config.Config.Load.UpdateDeviceStatusWorkers); i++ {
 		go uc.updateDeviceStatus()
 	}
 	return nil
@@ -87,7 +88,7 @@ func (uc *UpstreamController) dispatchMessage() {
 
 		klog.Infof("Dispatch message: %s", msg.GetID())
 
-		resourceType, err := messagelayer.GetResourceType(msg.GetResource())
+		resourceType, err := messagelayer.GetResourceTypeForDevice(msg.GetResource())
 		if err != nil {
 			klog.Warningf("Parse message: %s resource type with error: %s", msg.GetID(), err)
 			continue
@@ -97,6 +98,7 @@ func (uc *UpstreamController) dispatchMessage() {
 		switch resourceType {
 		case constants.ResourceTypeTwinEdgeUpdated:
 			uc.deviceStatusChan <- msg
+		case constants.ResourceTypeMembershipDetail:
 		default:
 			klog.Warningf("Message: %s, with resource type: %s not intended for device controller", msg.GetID(), resourceType)
 		}
@@ -171,13 +173,13 @@ func (uc *UpstreamController) updateDeviceStatus() {
 				klog.Warningf("Message: %s process failure, get node id failed with error: %s", msg.GetID(), err)
 				continue
 			}
-			resource, err := messagelayer.BuildResource(nodeID, "twin", "")
+			resource, err := messagelayer.BuildResourceForDevice(nodeID, "twin", "")
 			if err != nil {
 				klog.Warningf("Message: %s process failure, build message resource failed with error: %s", msg.GetID(), err)
 				continue
 			}
 			resMsg.BuildRouter(modules.DeviceControllerModuleName, constants.GroupTwin, resource, model.ResponseOperation)
-			resMsg.Content = "OK"
+			resMsg.Content = commonconst.MessageSuccessfulContent
 			err = uc.messageLayer.Response(*resMsg)
 			if err != nil {
 				klog.Warningf("Message: %s process failure, response failed with error: %s", msg.GetID(), err)
@@ -205,7 +207,7 @@ func (uc *UpstreamController) unmarshalDeviceStatusMessage(msg model.Message) (*
 func NewUpstreamController(dc *DownstreamController) (*UpstreamController, error) {
 	uc := &UpstreamController{
 		crdClient:    keclient.GetCRDClient(),
-		messageLayer: messagelayer.NewContextMessageLayer(),
+		messageLayer: messagelayer.DeviceControllerMessageLayer(),
 		dc:           dc,
 	}
 	return uc, nil

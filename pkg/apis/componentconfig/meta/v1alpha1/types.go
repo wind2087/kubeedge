@@ -19,25 +19,16 @@ package v1alpha1
 type ModuleName string
 type GroupName string
 
-// Available modules for CloudCore
-const (
-	ModuleNameEdgeController   ModuleName = "edgecontroller"
-	ModuleNameDeviceController ModuleName = "devicecontroller"
-	ModuleNameCloudHub         ModuleName = "cloudhub"
-	ModuleNameRouter           ModuleName = "router"
-)
-
 // Available modules for EdgeCore
 const (
 	ModuleNameEventBus   ModuleName = "eventbus"
 	ModuleNameServiceBus ModuleName = "servicebus"
 	// TODO @kadisi change websocket to edgehub
 	ModuleNameEdgeHub     ModuleName = "websocket"
-	ModuleNameMetaManager ModuleName = "metaManager"
+	ModuleNameMetaManager ModuleName = "metamanager"
 	ModuleNameEdged       ModuleName = "edged"
 	ModuleNameTwin        ModuleName = "twin"
 	ModuleNameDBTest      ModuleName = "dbTest"
-	ModuleNameEdgeMesh    ModuleName = "edgemesh"
 )
 
 // Available modules group
@@ -49,5 +40,4 @@ const (
 	GroupNameMeta           GroupName = "meta"
 	GroupNameEdged          GroupName = "edged"
 	GroupNameUser           GroupName = "user"
-	GroupNameMesh           GroupName = "mesh"
 )

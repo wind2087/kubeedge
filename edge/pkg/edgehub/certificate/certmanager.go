@@ -12,7 +12,9 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
-	"io/ioutil"
+	"io"
+	nethttp "net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -24,7 +26,7 @@ import (
 	"github.com/kubeedge/kubeedge/common/constants"
 	"github.com/kubeedge/kubeedge/edge/pkg/edgehub/common/certutil"
 	"github.com/kubeedge/kubeedge/edge/pkg/edgehub/common/http"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha1"
+	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha2"
 )
 
 // jitteryDuration uses some jitter to set the rotation threshold so each node
@@ -38,6 +40,8 @@ import (
 var jitteryDuration = func(totalDuration float64) time.Duration {
 	return wait.Jitter(time.Duration(totalDuration), 0.2) - time.Duration(totalDuration*0.3)
 }
+
+var CleanupTokenChan = make(chan struct{}, 1)
 
 type CertManager struct {
 	RotateCertificates bool
@@ -58,7 +62,7 @@ type CertManager struct {
 }
 
 // NewCertManager creates a CertManager for edge certificate management according to EdgeHub config
-func NewCertManager(edgehub v1alpha1.EdgeHub, nodename string) CertManager {
+func NewCertManager(edgehub v1alpha2.EdgeHub, nodename string) CertManager {
 	certReq := &x509.CertificateRequest{
 		Subject: pkix.Name{
 			Country:      []string{"CN"},
@@ -89,8 +93,10 @@ func (cm *CertManager) Start() {
 	if err != nil {
 		err = cm.applyCerts()
 		if err != nil {
-			klog.Fatalf("Error: %v", err)
+			klog.Exitf("Error: %v", err)
 		}
+		// inform to cleanup token in configuration edgecore.yaml
+		CleanupTokenChan <- struct{}{}
 	}
 	if cm.RotateCertificates {
 		cm.rotate()
@@ -237,13 +243,13 @@ func (cm *CertManager) rotateCert() (bool, error) {
 
 // getCA returns the CA in pem format.
 func (cm *CertManager) getCA() ([]byte, error) {
-	return ioutil.ReadFile(cm.caFile)
+	return os.ReadFile(cm.caFile)
 }
 
 // GetCACert gets the cloudcore CA certificate
 func GetCACert(url string) ([]byte, error) {
 	client := http.NewHTTPClient()
-	req, err := http.BuildRequest("GET", url, nil, "", "")
+	req, err := http.BuildRequest(nethttp.MethodGet, url, nil, "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -252,8 +258,7 @@ func GetCACert(url string) ([]byte, error) {
 		return nil, err
 	}
 	defer res.Body.Close()
-
-	caCert, err := ioutil.ReadAll(res.Body)
+	caCert, err := io.ReadAll(io.LimitReader(res.Body, constants.MaxRespBodyLength))
 	if err != nil {
 		return nil, err
 	}
@@ -270,10 +275,10 @@ func (cm *CertManager) GetEdgeCert(url string, capem []byte, cert tls.Certificat
 
 	client, err := http.NewHTTPClientWithCA(capem, cert)
 	if err != nil {
-		return nil, nil, fmt.Errorf("falied to create http client:%v", err)
+		return nil, nil, fmt.Errorf("failed to create http client:%v", err)
 	}
 
-	req, err := http.BuildRequest("GET", url, bytes.NewReader(csr), token, cm.NodeName)
+	req, err := http.BuildRequest(nethttp.MethodGet, url, bytes.NewReader(csr), token, cm.NodeName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate http request:%v", err)
 	}
@@ -284,11 +289,11 @@ func (cm *CertManager) GetEdgeCert(url string, capem []byte, cert tls.Certificat
 	}
 	defer res.Body.Close()
 
-	content, err := ioutil.ReadAll(res.Body)
+	content, err := io.ReadAll(io.LimitReader(res.Body, constants.MaxRespBodyLength))
 	if err != nil {
 		return nil, nil, err
 	}
-	if res.StatusCode != 200 {
+	if res.StatusCode != nethttp.StatusOK {
 		return nil, nil, fmt.Errorf(string(content))
 	}
 
